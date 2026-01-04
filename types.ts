@@ -1,3 +1,4 @@
+
 export type ResponseType = 'OK' | 'NG' | 'N/A';
 
 export interface User {
@@ -83,7 +84,7 @@ export interface MeetingLog {
     title: string;
     date: string;
     startTime: string;
-    endTime?: string;
+    endTime: string;
     photoUrl: string;
     participants: string[];
     topics: string;
@@ -92,6 +93,6 @@ export interface MeetingLog {
 
 export interface Permission {
     role: string;
-    module: 'CHECKLIST' | 'MEETING' | 'MAINTENANCE' | 'AUDIT' | 'ADMIN' | 'LINE_STOP';
+    module: 'CHECKLIST' | 'MEETING' | 'MAINTENANCE' | 'AUDIT' | 'ADMIN' | 'LINE_STOP' | 'MANAGEMENT';
     allowed: boolean;
 }
