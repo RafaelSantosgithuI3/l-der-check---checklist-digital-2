@@ -55,59 +55,57 @@ export const savePermissions = async (permissions: Permission[]) => {
 
 export const getLines = async (): Promise<ConfigItem[]> => {
     try {
-        const lines = await apiFetch('/config/lines');
-        if (Array.isArray(lines) && lines.length > 0) return lines;
-        return [
-            { id: 1, name: 'TP_TNP-01' }, { id: 2, name: 'TP_TNP-02' }, 
-            { id: 3, name: 'TP_TNP-03' }, { id: 4, name: 'TP_SEC-01' }, { id: 5, name: 'TP_SEC-02' }
-        ];
+        const data = await apiFetch('/config/lines');
+        if (Array.isArray(data)) {
+            // Backend agora retorna {id, name} graças ao alias SQL, então retornamos direto
+            return data;
+        }
+        return [];
     } catch (e) {
-        return [
-             { id: 1, name: 'TP_TNP-01' }, { id: 2, name: 'TP_TNP-02' }, 
-             { id: 3, name: 'TP_TNP-03' }, { id: 4, name: 'TP_SEC-01' }, { id: 5, name: 'TP_SEC-02' }
-        ];
+        console.error(e);
+        return [];
     }
 };
 
 export const addLine = async (lineName: string) => {
-    try {
-        await apiFetch('/config/lines', { method: 'POST', body: JSON.stringify({ line: lineName }) });
-    } catch (e) { console.error(e); throw e; }
-}
+    // Backend espera { name: "..." } no body
+    await apiFetch('/config/lines', {
+        method: 'POST',
+        body: JSON.stringify({ name: lineName })
+    });
+};
 
-export const deleteLine = async (id: string | number) => {
-    try {
-        await apiFetch(`/config/lines/${id}`, { method: 'DELETE' });
-    } catch (e) { console.error(e); throw e; }
-}
+export const deleteLine = async (id: number | string) => {
+    await apiFetch(`/config/lines/${id}`, { method: 'DELETE' });
+};
 
 // --- CARGOS (ROLES) (CRUD com IDs) ---
 
 export const getRoles = async (): Promise<ConfigItem[]> => {
     try {
-        const roles = await apiFetch('/config/roles');
-        if (Array.isArray(roles) && roles.length > 0) return roles;
-        return [
-             {id: 1, name: 'Diretor'}, {id: 2, name: 'TI'}, {id: 3, name: 'Supervisor'}, {id: 4, name: 'Líder'}
-        ];
+        const data = await apiFetch('/config/roles');
+        if (Array.isArray(data)) {
+            // Backend agora retorna {id, name} graças ao alias SQL
+            return data;
+        }
+        return [];
     } catch (e) {
-         return [
-             {id: 1, name: 'Diretor'}, {id: 2, name: 'TI'}, {id: 3, name: 'Supervisor'}, {id: 4, name: 'Líder'}
-        ];
+        console.error(e);
+        return [];
     }
 };
 
 export const addRole = async (roleName: string) => {
-    try {
-        await apiFetch('/config/roles', { method: 'POST', body: JSON.stringify({ role: roleName }) });
-    } catch (e) { console.error(e); throw e; }
-}
+    // Backend espera { name: "..." } no body
+    await apiFetch('/config/roles', {
+        method: 'POST',
+        body: JSON.stringify({ name: roleName })
+    });
+};
 
-export const deleteRole = async (id: string | number) => {
-    try {
-        await apiFetch(`/config/roles/${id}`, { method: 'DELETE' });
-    } catch (e) { console.error(e); throw e; }
-}
+export const deleteRole = async (id: number | string) => {
+    await apiFetch(`/config/roles/${id}`, { method: 'DELETE' });
+};
 
 
 // --- MODELOS E POSTOS (Genéricos ainda) ---

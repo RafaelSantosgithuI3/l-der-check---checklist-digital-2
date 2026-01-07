@@ -915,44 +915,71 @@ const App = () => {
       }
   }
 
+// --- MANAGEMENT HANDLERS (CORRIGIDOS) ---
+
   const handleAddLine = async () => {
-      if (!newItemName) return;
+      if (!newItemName || !newItemName.trim()) return;
       setIsLoading(true);
       try {
-          await addLine(newItemName);
-          setLines(await getLines());
+          // Envia o nome limpo para o backend
+          await addLine(newItemName.trim());
+          // Busca a lista atualizada do banco para garantir sincronia
+          const updatedList = await getLines();
+          setLines(updatedList);
           setNewItemName('');
-      } catch (e) { alert("Erro ao salvar linha"); } finally { setIsLoading(false); }
+      } catch (e: any) { 
+          console.error("Erro ao salvar linha:", e);
+          alert("Erro ao salvar linha: " + (e.message || "Verifique o console")); 
+      } finally { 
+          setIsLoading(false); 
+      }
   }
 
   const handleDeleteLine = async (id: number | string) => {
-      if (!confirm("Excluir Linha?")) return;
+      if (!confirm("Excluir esta Linha?")) return;
       setIsLoading(true);
       try {
           await deleteLine(id);
-          setLines(await getLines());
-      } catch (e) { alert("Erro ao excluir linha"); } finally { setIsLoading(false); }
+          const updatedList = await getLines();
+          setLines(updatedList);
+      } catch (e: any) { 
+          console.error("Erro ao excluir linha:", e);
+          alert("Erro ao excluir linha: " + (e.message || "Verifique o console")); 
+      } finally { 
+          setIsLoading(false); 
+      }
   }
 
   const handleAddRole = async () => {
-      if (!newItemName) return;
+      if (!newItemName || !newItemName.trim()) return;
       setIsLoading(true);
       try {
-          await addRole(newItemName);
-          setAvailableRoles(await getRoles());
+          await addRole(newItemName.trim());
+          const updatedList = await getRoles();
+          setAvailableRoles(updatedList);
           setNewItemName('');
-      } catch (e) { alert("Erro ao salvar cargo"); } finally { setIsLoading(false); }
+      } catch (e: any) { 
+          console.error("Erro ao salvar cargo:", e);
+          alert("Erro ao salvar cargo: " + (e.message || "Verifique o console")); 
+      } finally { 
+          setIsLoading(false); 
+      }
   }
 
   const handleDeleteRole = async (id: number | string) => {
-      if (!confirm("Excluir Cargo?")) return;
+      if (!confirm("Excluir este Cargo?")) return;
       setIsLoading(true);
       try {
           await deleteRole(id);
-          setAvailableRoles(await getRoles());
-      } catch (e) { alert("Erro ao excluir cargo"); } finally { setIsLoading(false); }
+          const updatedList = await getRoles();
+          setAvailableRoles(updatedList);
+      } catch (e: any) { 
+          console.error("Erro ao excluir cargo:", e);
+          alert("Erro ao excluir cargo: " + (e.message || "Verifique o console")); 
+      } finally { 
+          setIsLoading(false); 
+      }
   }
-
   const openEditModal = (user: User) => {
       setEditingUser({...user, password: ''}); 
       setOriginalMatriculaEdit(user.matricula);
@@ -1478,7 +1505,8 @@ const App = () => {
               
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {hasPermission('CHECKLIST') && (
-                      <div onClick={() => setView('CHECKLIST_MENU')} className="group bg-zinc-900 p-6 rounded-2xl border border-zinc-800 hover:border-blue-600/50 hover:bg-zinc-800 transition-all cursor-pointer relative overflow-hidden h-40 flex flex-col justify-center">
+                      // CORREÇÃO AQUI: Chama a função que prepara o modal e reseta a linha
+                      <div onClick={handleStartChecklist} className="group bg-zinc-900 p-6 rounded-2xl border border-zinc-800 hover:border-blue-600/50 hover:bg-zinc-800 transition-all cursor-pointer relative overflow-hidden h-40 flex flex-col justify-center">
                           <div className="flex items-center gap-4">
                               <div className="w-12 h-12 bg-blue-600/20 text-blue-500 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform"><CheckSquare size={24} /></div>
                               <div>
@@ -1979,29 +2007,31 @@ const App = () => {
               {isLoading && <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center text-white backdrop-blur-sm">Salvando...</div>}
               
               {showLinePrompt && (
-              <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
-                  <Card className="w-full max-w-sm bg-zinc-900 border-zinc-700 shadow-2xl">
-                      <h3 className="text-xl font-bold text-white mb-2">Iniciar Checklist</h3>
-                      <p className="text-sm text-zinc-400 mb-6">Selecione a linha de produção para iniciar a verificação.</p>
-                      <div className="space-y-4">
-                          <div>
-                              <label className="text-xs font-bold text-zinc-500 uppercase mb-2 block">Selecione a Linha</label>
-                              <select 
-                                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-white focus:ring-2 focus:ring-blue-600 outline-none"
-                                  value={currentLine}
-                                  onChange={e => setCurrentLine(e.target.value)}
-                              >
-                                  {lines.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
-                              </select>
-                          </div>
-                          <div className="flex gap-2">
-                              <Button variant="secondary" fullWidth onClick={() => { setShowLinePrompt(false); setView('MENU'); }}>Cancelar</Button>
-                              <Button fullWidth onClick={handleConfirmLine}>Confirmar</Button>
-                          </div>
-                      </div>
-                  </Card>
-              </div>
-              )}
+               <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+                   <Card className="w-full max-w-sm bg-zinc-900 border-zinc-700 shadow-2xl">
+                       <h3 className="text-xl font-bold text-white mb-2">Iniciar Checklist</h3>
+                       <p className="text-sm text-zinc-400 mb-6">Selecione a linha de produção para iniciar a verificação.</p>
+                       <div className="space-y-4">
+                           <div>
+                               <label className="text-xs font-bold text-zinc-500 uppercase mb-2 block">Selecione a Linha</label>
+                               <select 
+                                   className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-white focus:ring-2 focus:ring-blue-600 outline-none"
+                                   value={currentLine}
+                                   onChange={e => setCurrentLine(e.target.value)}
+                               >
+                                   {/* ADICIONADO: Opção padrão vazia para forçar seleção ou indicar vazio */}
+                                   <option value="">Selecione uma linha...</option>
+                                   {lines.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                               </select>
+                           </div>
+                           <div className="flex gap-2">
+                               <Button variant="secondary" fullWidth onClick={() => { setShowLinePrompt(false); setView('MENU'); }}>Cancelar</Button>
+                               <Button fullWidth onClick={handleConfirmLine}>Confirmar</Button>
+                           </div>
+                       </div>
+                   </Card>
+               </div>
+            )}
               
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
                   <div><h1 className="text-2xl font-bold text-white flex items-center gap-2">{isMaintenanceMode ? <Hammer className="text-purple-500"/> : <CheckSquare className="text-blue-500"/>} {isMaintenanceMode ? 'Manutenção' : 'Checklist Digital'}</h1><div className="flex items-center gap-2 mt-2 text-sm text-zinc-400"><span className="bg-zinc-800 px-2 py-0.5 rounded text-zinc-300 border border-zinc-700">{currentLine}</span><span>•</span><span>{getManausDate().toLocaleDateString()}</span></div></div>

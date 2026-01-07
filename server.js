@@ -1,6 +1,6 @@
 
 /**
- * LÍDER CHECK - BACKEND V9.0 (Fix Management Routes)
+ * LÍDER CHECK - BACKEND V9.1 (Fix Management CRUD)
  * Autor: Senior Software Architect
  */
 
@@ -276,10 +276,10 @@ app.post('/api/logs', async (req, res) => {
     try {
         if (type === 'MAINTENANCE') {
             await dbRun(`INSERT INTO logs_manutencao (user_id, user_name, user_role, line, date, items_count, ng_count, observation, data, maintenance_target, items_snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [userId, userName, userRole, line, date, itemsCount, ngCount, observation, dataStr, maintenanceTarget, snapshotStr]);
+                [userId, userName, userRole, line, date, items_count, ng_count, observation, dataStr, maintenanceTarget, snapshotStr]);
         } else {
             await dbRun(`INSERT INTO logs_lider (user_id, user_name, user_role, line, date, items_count, ng_count, observation, data, items_snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [userId, userName, userRole, line, date, itemsCount, ngCount, observation, dataStr, snapshotStr]);
+                [userId, userName, userRole, line, date, items_count, ng_count, observation, dataStr, snapshotStr]);
         }
         res.json({ message: "Salvo" });
     } catch (e) { res.status(500).json({ error: e.message }); }
@@ -309,17 +309,14 @@ app.post('/api/config/items', async (req, res) => {
     } catch (e) { await dbRun("ROLLBACK"); res.status(500).json({ error: e.message }); }
 });
 
-// LINE STOPS (FIX CRÍTICO)
+// LINE STOPS
 app.get('/api/line-stops', async (req, res) => {
     try {
         const stops = await dbAll("SELECT * FROM line_stops ORDER BY date DESC LIMIT 500");
         res.json(stops.map(r => {
             let parsed = {};
             try { parsed = JSON.parse(r.data); } catch(e) { parsed = {}; }
-            
-            // FIX: ID Fallback para evitar crash com ids NULL
             const safeId = r.id ? r.id.toString() : `temp_${Math.random().toString(36).substr(2, 9)}`;
-
             return { 
                 ...r, 
                 id: safeId, 
@@ -336,8 +333,6 @@ app.get('/api/line-stops', async (req, res) => {
 
 app.post('/api/line-stops', async (req, res) => {
     const { id, userId, userName, userRole, line, date, status, data, signedDocUrl } = req.body;
-    
-    // Serialização de dados complexos
     const dataStr = typeof data === 'object' ? JSON.stringify(data) : data;
     const finalStatus = status || 'WAITING_JUSTIFICATION';
     const finalSignedDoc = signedDocUrl || null;
@@ -350,16 +345,10 @@ app.post('/api/line-stops', async (req, res) => {
         }
 
         if (recordExists) {
-            await dbRun(
-                `UPDATE line_stops SET line=?, status=?, data=?, signed_doc_url=? WHERE id=?`, 
-                [line, finalStatus, dataStr, finalSignedDoc, id]
-            );
+            await dbRun(`UPDATE line_stops SET line=?, status=?, data=?, signed_doc_url=? WHERE id=?`, [line, finalStatus, dataStr, finalSignedDoc, id]);
         } else {
             const newId = id || Date.now().toString();
-            await dbRun(
-                `INSERT INTO line_stops (id, user_id, user_name, user_role, line, date, status, data, signed_doc_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
-                [newId, userId, userName, userRole, line, date, finalStatus, dataStr, finalSignedDoc]
-            );
+            await dbRun(`INSERT INTO line_stops (id, user_id, user_name, user_role, line, date, status, data, signed_doc_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, [newId, userId, userName, userRole, line, date, finalStatus, dataStr, finalSignedDoc]);
         }
         res.json({ message: "Salvo com sucesso" });
     } catch (e) { res.status(500).json({error: e.message}); }
@@ -370,16 +359,16 @@ app.post('/api/line-stops', async (req, res) => {
 // Roles
 app.get('/api/config/roles', async (req, res) => {
     try {
-        // Normaliza retorno para {id, name} para o frontend
+        // Alias 'role' as 'name' para compatibilidade com Frontend ConfigItem
         const rows = await dbAll("SELECT id, role as name FROM config_roles");
         res.json(rows);
     } catch(e) { res.status(500).json({error: e.message}); }
 });
 
 app.post('/api/config/roles', async (req, res) => {
-    const { role } = req.body; // Recebe apenas { role: "Nome" }
+    const { name } = req.body; // Frontend envia { name: "..." }
     try {
-        await dbRun("INSERT INTO config_roles (role) VALUES (?)", [role]);
+        await dbRun("INSERT INTO config_roles (role) VALUES (?)", [name]);
         res.json({message: "Cargo salvo"});
     } catch(e) { res.status(500).json({error: e.message}); }
 });
@@ -394,16 +383,16 @@ app.delete('/api/config/roles/:id', async (req, res) => {
 // Lines
 app.get('/api/config/lines', async (req, res) => {
     try {
-        // Normaliza retorno para {id, name}
+        // Alias 'line' as 'name' para compatibilidade
         const rows = await dbAll("SELECT id, line as name FROM config_lines");
         res.json(rows);
     } catch(e) { res.status(500).json({error: e.message}); }
 });
 
 app.post('/api/config/lines', async (req, res) => {
-    const { line } = req.body;
+    const { name } = req.body; // Frontend envia { name: "..." }
     try {
-        await dbRun("INSERT INTO config_lines (line) VALUES (?)", [line]);
+        await dbRun("INSERT INTO config_lines (line) VALUES (?)", [name]);
         res.json({message: "Linha salva"});
     } catch(e) { res.status(500).json({error: e.message}); }
 });
