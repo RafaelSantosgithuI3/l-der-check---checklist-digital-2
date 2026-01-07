@@ -11,6 +11,11 @@ export interface User {
   isAdmin?: boolean; // Novo campo para controle explícito de admin
 }
 
+export interface ConfigItem {
+    id: number | string;
+    name: string;
+}
+
 export interface ChecklistItem {
   id: string;
   category: string; // Maps to 'Posto'
@@ -77,6 +82,9 @@ export interface ChecklistLog {
   // Controle de fluxo Parada de Linha
   status?: LogStatus;
   signedDocUrl?: string; // URL da foto da folha assinada
+  
+  // Snapshot dos itens no momento do checklist para versionamento
+  itemsSnapshot?: ChecklistItem[];
 }
 
 export interface MeetingLog {

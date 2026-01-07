@@ -1,10 +1,9 @@
 
 import ExcelJS from 'exceljs';
-import { ChecklistData, User, ChecklistItem, ChecklistLog, MeetingLog, LineStopData } from '../types';
-import { getLogs, getLogsByWeekSyncStrict, saveBackupToServer } from './storageService';
+import { saveAs } from 'file-saver';
+import { User, ChecklistItem, ChecklistLog, MeetingLog, LineStopData } from '../types';
+import { getLogs, getLogsByWeekSyncStrict } from './storageService';
 import { getAllUsers } from './authService';
-
-// --- HELPERS ---
 
 const getWeekNumber = (d: Date) => {
     d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
@@ -17,26 +16,34 @@ const getWeekNumber = (d: Date) => {
 const loadTemplate = async (): Promise<ExcelJS.Workbook> => {
     const workbook = new ExcelJS.Workbook();
     try {
-        // Tenta carregar o arquivo da pasta public
         const response = await fetch('/template_checklist.xlsx');
-        if (!response.ok) throw new Error("Template não encontrado");
+        if (!response.ok) throw new Error(`Template fetch status: ${response.status}`);
         const buffer = await response.arrayBuffer();
         await workbook.xlsx.load(buffer);
     } catch (e) {
-        console.warn("Template não encontrado ou erro ao carregar. Criando planilha básica em memória...", e);
-        // Fallback: Cria uma planilha básica se não houver template, para não quebrar o app
-        const sheet = workbook.addWorksheet('Checklist');
-        // Estrutura mínima para o código abaixo funcionar sem o arquivo físico
-        sheet.getCell('A5').value = "MÊS:";
-        sheet.getCell('F5').value = "LINHA:";
-        sheet.getCell('G5').value = "TURNO:";
-        sheet.getCell('I5').value = "WEEK:";
-        sheet.getRow(7).values = []; // Linha de início dos itens
+        console.warn("Template não encontrado. Criando nova planilha em memória.", e);
+        workbook.addWorksheet('Checklist');
     }
     return workbook;
 };
 
-// --- CORE EXPORT FUNCTION ---
+const getChecklistItemsFromLog = (log: ChecklistLog | undefined, currentItems: ChecklistItem[]): ChecklistItem[] => {
+    // Prioriza o snapshot salvo no log para manter histórico fiel
+    if (log && log.itemsSnapshot && log.itemsSnapshot.length > 0) {
+        return log.itemsSnapshot;
+    }
+    return currentItems;
+}
+
+// Utilitário para garantir mesclagem sem erro
+const forceMerge = (sheet: ExcelJS.Worksheet, range: string) => {
+    try { 
+        sheet.unMergeCells(range); 
+    } catch (e) { }
+    try { 
+        sheet.mergeCells(range); 
+    } catch (e) { console.warn('Merge error', range); }
+};
 
 export const createExcelBuffer = async (
     lineName: string,
@@ -46,489 +53,543 @@ export const createExcelBuffer = async (
     allLogs: ChecklistLog[],
     allUsers: User[]
 ) => {
-    // 1. Carregar Template
+    console.log("Iniciando geração do Excel...");
     const workbook = await loadTemplate();
-    
-    // CORREÇÃO: Pegar a primeira worksheet existente do template, em vez de buscar por nome ou criar nova
     let worksheet = workbook.worksheets[0];
     if (!worksheet) worksheet = workbook.addWorksheet('Checklist');
 
-    // Filtra logs estritamente por LINHA, TURNO e DATA(SEMANA)
+    // --- CONFIGURAÇÃO DE COLUNAS (Layout Fixo) ---
+    worksheet.getColumn('A').width = 5;  // ID
+    worksheet.getColumn('B').width = 15; // Categoria
+    worksheet.getColumn('C').width = 10; // Texto
+    worksheet.getColumn('D').width = 10; // Texto
+    worksheet.getColumn('E').width = 10; // Texto
+    worksheet.getColumn('F').width = 21; // Imagem Ref (Ajustado para 21 conforme solicitado)
+    // Dias da semana
+    ['G', 'H', 'I', 'J', 'K', 'L'].forEach(col => worksheet.getColumn(col).width = 8);
+
+    // --- DADOS DA SEMANA ---
+    // Busca logs filtrados rigorosamente
     const weeklyLogs = getLogsByWeekSyncStrict(allLogs, dateObj, lineName, shiftName, allUsers);
     
-    const logsByDay: {[key: number]: ChecklistLog} = {};
+    // Mapa: '2023-10-25' => Log
+    const logsByDateMap: {[dateStr: string]: ChecklistLog} = {};
     weeklyLogs.forEach(l => {
-        const d = new Date(l.date).getDay(); // 0 (Dom) a 6 (Sab)
-        logsByDay[d] = l;
+        // Garante formato YYYY-MM-DD
+        const dStr = l.date.split('T')[0];
+        logsByDateMap[dStr] = l;
     });
+
+    // Calcular datas dos dias da semana (Segunda a Sábado)
+    const current = new Date(dateObj);
+    const day = current.getDay();
+    const diff = current.getDate() - day + (day === 0 ? -6 : 1); // Ajuste para pegar Segunda
+    const monday = new Date(current);
+    monday.setDate(diff);
+
+    const weekDateStrings: string[] = [];
+    const weekDisplayDates: string[] = [];
+    
+    for(let i=0; i<6; i++) {
+        const d = new Date(monday);
+        d.setDate(monday.getDate() + i);
+        // String para busca no Map
+        weekDateStrings.push(d.toISOString().split('T')[0]);
+        // String para exibição no cabeçalho (dd/mm)
+        weekDisplayDates.push(`${d.getDate().toString().padStart(2,'0')}/${(d.getMonth()+1).toString().padStart(2,'0')}`);
+    }
+
+    // Define quais itens usar (do log mais recente ou da lista atual)
+    const referenceLog = weeklyLogs.length > 0 ? weeklyLogs[weeklyLogs.length - 1] : undefined;
+    const itemsToUse = getChecklistItemsFromLog(referenceLog, items);
 
     const weekNum = getWeekNumber(dateObj);
     const monthName = dateObj.toLocaleString('pt-BR', { month: 'long' }).toUpperCase();
-    const yearNum = dateObj.getFullYear();
-
-    // 2. Preencher Cabeçalho (Mapeamento Fixo)
     
-    // A5:E5 -> MÊS/ANO
-    worksheet.mergeCells('A5:E5');
-    const cellMes = worksheet.getCell('A5');
-    cellMes.value = `MÊS: ${monthName} / ${yearNum}`;
-    cellMes.font = { bold: true, name: 'Arial', size: 12 };
-    cellMes.alignment = { horizontal: 'center', vertical: 'middle' };
+    // --- ESTILOS PADRÃO ---
+    const centerStyle: Partial<ExcelJS.Alignment> = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    const leftStyle: Partial<ExcelJS.Alignment> = { vertical: 'middle', horizontal: 'left', wrapText: true };
+    const borderStyle: Partial<ExcelJS.Borders> = { 
+        top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} 
+    };
+    const headerFont = { bold: true, size: 10, name: 'Arial' };
+    const dataFont = { size: 9, name: 'Arial' };
 
-    // F5 -> LINHA
-    const cellLinha = worksheet.getCell('F5');
-    cellLinha.value = `LINHA: ${lineName}`;
-    cellLinha.font = { bold: true, name: 'Arial', size: 10 };
-    cellLinha.alignment = { horizontal: 'center', vertical: 'middle' };
+    // --- CABEÇALHO DO RELATÓRIO ---
+    // Limpa merges antigos do cabeçalho para evitar conflito
+    ['A5:E5', 'G5:H5', 'I5:L5'].forEach(range => {
+        try { worksheet.unMergeCells(range); } catch(e){}
+    });
 
-    // G5:H5 -> TURNO
-    worksheet.mergeCells('G5:H5');
-    const cellTurno = worksheet.getCell('G5');
-    cellTurno.value = `TURNO: ${shiftName}`;
-    cellTurno.font = { bold: true, name: 'Arial', size: 10 };
-    cellTurno.alignment = { horizontal: 'center', vertical: 'middle' };
+    forceMerge(worksheet, 'A5:E5');
+    const cellA5 = worksheet.getCell('A5');
+    cellA5.value = `MÊS: ${monthName} / ${dateObj.getFullYear()}`;
+    cellA5.font = headerFont; cellA5.alignment = centerStyle; cellA5.border = borderStyle;
 
-    // I5:L5 -> WEEK
-    worksheet.mergeCells('I5:L5');
-    const cellWeek = worksheet.getCell('I5');
-    cellWeek.value = `WEEK: ${weekNum}`;
-    cellWeek.font = { bold: true, name: 'Arial', size: 10 };
-    cellWeek.alignment = { horizontal: 'center', vertical: 'middle' };
+    const cellF5 = worksheet.getCell('F5');
+    cellF5.value = `LINHA: ${lineName}`;
+    cellF5.font = headerFont; cellF5.alignment = centerStyle; cellF5.border = borderStyle;
 
-    // 3. Preencher Itens (Começando na Linha 7)
+    forceMerge(worksheet, 'G5:H5');
+    const cellG5 = worksheet.getCell('G5');
+    cellG5.value = `TURNO: ${shiftName}`;
+    cellG5.font = headerFont; cellG5.alignment = centerStyle; cellG5.border = borderStyle;
+
+    forceMerge(worksheet, 'I5:L5');
+    const cellI5 = worksheet.getCell('I5');
+    cellI5.value = `WEEK: ${weekNum}`;
+    cellI5.font = headerFont; cellI5.alignment = centerStyle; cellI5.border = borderStyle;
+
+    // Cabeçalho dos Dias (Linha 6)
+    const colLetters = ['G', 'H', 'I', 'J', 'K', 'L'];
+    const daysOfWeek = ['SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SAB'];
+    
+    colLetters.forEach((col, idx) => {
+        const cell = worksheet.getCell(`${col}6`);
+        cell.value = `${daysOfWeek[idx]}\n${weekDisplayDates[idx]}`;
+        cell.alignment = centerStyle;
+        cell.font = { bold: true, size: 8 };
+        cell.border = borderStyle;
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } };
+    });
+
+    // --- CORPO DO CHECKLIST (Itens) ---
     const startRow = 7;
     
-    // Se houver mais itens do que o espaço padrão (assumindo template com ~20 linhas), 
-    // precisamos inserir linhas para não sobrescrever o rodapé.
-    // Vamos inserir linhas a partir da startRow para cada item.
-    
-    // Vamos limpar a linha 7 inicial e inserir as novas se necessário
-    if (items.length > 1) {
-        // spliceRows empurra o conteúdo existente para baixo, preservando o rodapé do template
-        worksheet.spliceRows(startRow + 1, 0, ...new Array(items.length - 1).fill([]));
-    }
-
-    const centerStyle: Partial<ExcelJS.Alignment> = { vertical: 'middle', horizontal: 'center', wrapText: true };
-    const borderStyle: Partial<ExcelJS.Borders> = {
-        top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' }
-    };
-
-    for (let i = 0; i < items.length; i++) {
-        const item = items[i];
+    // Itera sobre os itens
+    for (let i = 0; i < itemsToUse.length; i++) {
+        const item = itemsToUse[i];
         const currentRow = startRow + i;
         const row = worksheet.getRow(currentRow);
-        row.height = 45; // Altura para caber imagem/texto
-
-        // Coluna A: ID
-        const cellId = worksheet.getCell(`A${currentRow}`);
-        cellId.value = i + 1;
-        cellId.alignment = centerStyle;
-        cellId.border = borderStyle;
-
-        // Coluna B: Categoria
-        const cellCat = worksheet.getCell(`B${currentRow}`);
-        cellCat.value = item.category;
-        cellCat.alignment = centerStyle;
-        cellCat.font = { size: 8 };
-        cellCat.border = borderStyle;
-
-        // Coluna C:E: Texto (Mesclar)
-        worksheet.mergeCells(`C${currentRow}:E${currentRow}`);
-        const cellText = worksheet.getCell(`C${currentRow}`);
-        cellText.value = item.text + (item.evidence ? `\n(Ref: ${item.evidence})` : '');
-        cellText.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
-        cellText.border = borderStyle;
-        cellText.font = { size: 9 };
-
-        // Coluna F: Imagem (Referência)
-        const cellImg = worksheet.getCell(`F${currentRow}`);
-        cellImg.value = ''; // Limpar valor texto
-        cellImg.border = borderStyle;
         
-        if (item.imageUrl) {
+        // Define altura fixa para caber imagem
+        row.height = 65; 
+
+        // Limpa merges que possam existir nessa linha (se for template reutilizado)
+        try { worksheet.unMergeCells(`C${currentRow}:E${currentRow}`); } catch(e){}
+
+        // A: ID (Sequencial Visual)
+        const cellA = worksheet.getCell(`A${currentRow}`);
+        cellA.value = i + 1;
+        cellA.alignment = centerStyle; 
+        cellA.border = borderStyle;
+        cellA.font = dataFont;
+
+        // B: Categoria
+        const cellB = worksheet.getCell(`B${currentRow}`);
+        cellB.value = item.category;
+        cellB.alignment = centerStyle; 
+        cellB.border = borderStyle; 
+        cellB.font = { size: 8, bold: true };
+
+        // C:E: Texto (Mesclar e escrever)
+        forceMerge(worksheet, `C${currentRow}:E${currentRow}`);
+        const cellC = worksheet.getCell(`C${currentRow}`);
+        cellC.value = item.text;
+        cellC.alignment = { ...leftStyle, wrapText: true };
+        cellC.border = borderStyle; 
+        cellC.font = { size: 9 };
+
+        // F: Imagem Referência
+        const cellF = worksheet.getCell(`F${currentRow}`);
+        cellF.value = ""; 
+        cellF.border = borderStyle;
+        
+        // Lógica de Imagem
+        if (item.imageUrl && item.imageUrl.length > 50) {
             try {
-                const base64Clean = item.imageUrl.replace(/^data:image\/(png|jpg|jpeg);base64,/, "");
-                const imageId = workbook.addImage({
-                    base64: base64Clean,
-                    extension: 'png',
-                });
-                // Ajuste fino da imagem dentro da célula F
-                worksheet.addImage(imageId, {
-                    tl: { col: 5, row: currentRow - 1 }, // Col F = index 5
-                    br: { col: 6, row: currentRow },
+                let base64 = item.imageUrl;
+                if (base64.includes('base64,')) {
+                    base64 = base64.split('base64,')[1];
+                }
+                const imgId = workbook.addImage({ base64: base64, extension: 'png' });
+                
+                // CORREÇÃO: Posicionamento preciso usando 'oneCell' e coordenadas inteiras
+                worksheet.addImage(imgId, {
+                    tl: { col: 5, row: currentRow - 1 }, // Coluna F é index 5
+                    br: { col: 6, row: currentRow },     // Até inicio da próxima coluna
                     editAs: 'oneCell'
                 } as any);
-            } catch (err) { console.error('Erro img', err); }
+            } catch (e) {
+                console.warn(`Erro ao adicionar imagem na linha ${currentRow}`, e);
+                cellF.value = "[Erro Img]";
+            }
+        } else if (item.evidence) {
+            cellF.value = item.evidence;
+            cellF.alignment = centerStyle;
+            cellF.font = { size: 7, italic: true };
         }
 
-        // Colunas G a L: Respostas (Seg a Sab)
-        const daysMap = [1, 2, 3, 4, 5, 6]; // Seg=1 ... Sab=6
-        const colMap = ['G', 'H', 'I', 'J', 'K', 'L'];
+        // G-L: Respostas (Dados dos Logs)
+        weekDateStrings.forEach((dateStr, idx) => {
+            if (idx >= 6) return; // Limite Sábado
 
-        daysMap.forEach((dayIdx, idx) => {
-            const colLetter = colMap[idx];
-            const cellResp = worksheet.getCell(`${colLetter}${currentRow}`);
-            const log = logsByDay[dayIdx];
-            const val = log?.data[item.id] || '';
+            const colLetter = colLetters[idx];
+            const cell = worksheet.getCell(`${colLetter}${currentRow}`);
+            
+            const log = logsByDateMap[dateStr];
+            let val = undefined;
+            
+            if (log && log.data) {
+                val = log.data[item.id];
+            }
 
-            cellResp.value = val;
-            cellResp.alignment = centerStyle;
-            cellResp.border = borderStyle;
-            cellResp.font = { bold: true };
+            cell.alignment = centerStyle; 
+            cell.border = borderStyle;
+            
+            // CORREÇÃO: Fonte preta e fundo sem cor (branco)
+            cell.font = { color: { argb: 'FF000000' }, bold: true }; // Preto
+            cell.fill = { type: 'pattern', pattern: 'none' }; // Sem preenchimento
 
             if (val === 'OK') {
-                cellResp.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF90EE90' } }; // Light Green
-                cellResp.font = { color: { argb: 'FF006400' }, bold: true };
+                cell.value = 'OK'; 
             } else if (val === 'NG') {
-                cellResp.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFCCCB' } }; // Light Red
-                cellResp.font = { color: { argb: 'FF8B0000' }, bold: true };
+                cell.value = 'NG'; 
             } else if (val === 'N/A') {
-                cellResp.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFE0' } }; // Light Yellow
-                cellResp.font = { color: { argb: 'FFDAA520' }, bold: true };
+                cell.value = 'N/A'; 
+            } else {
+                cell.value = '';
             }
         });
     }
 
-    // 4. Rodapé (Assinaturas)
-    // A linha de assinaturas deve ser imediatamente após os itens.
-    const footerRow = startRow + items.length;
-    
-    // Altura maior para caber assinatura diagonal
+    // --- RODAPÉ ---
+    const lastItemRow = startRow + itemsToUse.length;
+    const footerRow = lastItemRow + 1; 
+
     worksheet.getRow(footerRow).height = 80;
 
-    // A:F -> "RESPONSÁVEL"
-    worksheet.mergeCells(`A${footerRow}:F${footerRow}`);
-    const cellRespTitle = worksheet.getCell(`A${footerRow}`);
-    cellRespTitle.value = "RESPONSÁVEL DO TURNO";
-    cellRespTitle.alignment = { vertical: 'middle', horizontal: 'center' };
-    cellRespTitle.font = { bold: true, size: 12 };
-    cellRespTitle.border = borderStyle;
-    cellRespTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD3D3D3' } }; // Light Gray
+    try { worksheet.unMergeCells(`A${footerRow}:F${footerRow}`); } catch(e){}
 
-    // G:L -> Nomes (Diagonal)
-    const colMap = ['G', 'H', 'I', 'J', 'K', 'L'];
-    const daysMap = [1, 2, 3, 4, 5, 6];
+    forceMerge(worksheet, `A${footerRow}:F${footerRow}`);
+    const footerLabel = worksheet.getCell(`A${footerRow}`);
+    footerLabel.value = "VISTO DO RESPONSÁVEL (Assinatura Eletrônica)";
+    footerLabel.alignment = centerStyle;
+    footerLabel.font = { bold: true, size: 10 };
+    footerLabel.border = borderStyle;
+    footerLabel.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEEEEEE' } };
 
-    daysMap.forEach((dayIdx, idx) => {
-        const colLetter = colMap[idx];
-        const cellSign = worksheet.getCell(`${colLetter}${footerRow}`);
-        const log = logsByDay[dayIdx];
-
-        if (log) {
-            cellSign.value = `${log.userName}\n(${log.userId})`;
+    // Preenche os nomes dos responsáveis nas colunas de dia
+    weekDateStrings.forEach((dateStr, idx) => {
+        if (idx >= 6) return;
+        const colLetter = colLetters[idx];
+        const cell = worksheet.getCell(`${colLetter}${footerRow}`);
+        const log = logsByDateMap[dateStr];
+        
+        if(log) {
+            cell.value = `${log.userName}\n(${log.userId})`;
         } else {
-            cellSign.value = "-";
+            cell.value = "";
         }
         
-        // ESTILO DIAGONAL EXIGIDO
-        cellSign.alignment = { 
-            textRotation: 45, 
-            vertical: 'middle', 
-            horizontal: 'center',
-            wrapText: true 
-        };
-        cellSign.font = { size: 8, bold: true };
-        cellSign.border = borderStyle;
+        cell.alignment = { textRotation: 90, vertical: 'middle', horizontal: 'center', wrapText: true };
+        cell.font = { size: 8, bold: true };
+        cell.border = borderStyle;
     });
 
+    console.log("Excel montado, gerando buffer...");
     return await workbook.xlsx.writeBuffer();
 };
 
-// --- PUBLIC FUNCTIONS ---
-
-export const generateAndSaveBackup = async (
-    line: string, 
-    shift: string, 
-    date: Date, 
-    items: ChecklistItem[]
-) => {
-    const allLogs = await getLogs();
-    const allUsers = await getAllUsers();
-    const buffer = await createExcelBuffer(line, shift, date, items, allLogs, allUsers);
-    
-    const blob = new Blob([buffer]);
-    const reader = new FileReader();
-    return new Promise((resolve, reject) => {
-        reader.onloadend = async () => {
-            const base64data = reader.result as string;
-            const week = getWeekNumber(date);
-            const fileName = `BACKUP_${line}_T${shift}_W${week}_${date.getFullYear()}.xlsx`;
-            try {
-                const res = await saveBackupToServer(fileName, base64data);
-                resolve(res);
-            } catch (e) { reject(e); }
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-    });
-};
-
-export const downloadShiftExcel = async (
-    line: string,
-    shift: string,
-    dateStr: string,
-    items: ChecklistItem[]
-) => {
+export const downloadShiftExcel = async (line: string, shift: string, dateStr: string, items: ChecklistItem[]) => {
+    // dateStr vem como "2024-W10" ou data ISO
     let dateObj = new Date();
+    
+    // Tratamento robusto para pegar a data correta da semana selecionada
     if (dateStr.includes('-W')) {
-        const parts = dateStr.split('-W');
-        const year = parseInt(parts[0]);
-        const week = parseInt(parts[1]);
+        const [yearStr, weekStr] = dateStr.split('-W');
+        const year = parseInt(yearStr);
+        const week = parseInt(weekStr);
+        // Calcula a segunda-feira daquela semana
         const simpleDate = new Date(year, 0, 1 + (week - 1) * 7);
-        dateObj = simpleDate;
+        const day = simpleDate.getDay();
+        const diff = simpleDate.getDate() - day + (day === 0 ? -6 : 1);
+        dateObj = new Date(simpleDate.setDate(diff));
     } else {
         dateObj = new Date(dateStr);
     }
 
     const allLogs = await getLogs();
     const allUsers = await getAllUsers();
-
-    const buffer = await createExcelBuffer(line, shift, dateObj, items, allLogs, allUsers);
     
-    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const url = window.URL.createObjectURL(blob);
-    
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `Checklist_${line}_Turno${shift}_W${getWeekNumber(dateObj)}.xlsx`;
-    anchor.click();
-    window.URL.revokeObjectURL(url);
+    try {
+        const buffer = await createExcelBuffer(line, shift, dateObj, items, allLogs, allUsers);
+        const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        // FORMATO: CHECKLIST_LINHA_SEMANA.XLSX
+        saveAs(blob, `CHECKLIST_${line}_Week${getWeekNumber(dateObj)}.xlsx`);
+    } catch (e) {
+        console.error("ERRO CRÍTICO NO DOWNLOAD EXCEL:", e);
+        alert(`Erro ao gerar planilha: ${e instanceof Error ? e.message : 'Erro desconhecido'}`);
+    }
 }
 
-export const exportLogToExcel = async (log: ChecklistLog, items: ChecklistItem[]) => {
-    if (log.type === 'LINE_STOP') {
-        return exportLineStopToExcel(log);
-    }
+// Export individual
+export const exportLogToExcel = async (log: ChecklistLog, currentItems: ChecklistItem[]) => {
+    if (log.type === 'LINE_STOP') return exportLineStopToExcel(log);
 
     const allLogs = await getLogs();
     const allUsers = await getAllUsers();
     
-    // Tenta descobrir o turno
-    const fullUser = allUsers.find(u => u.matricula === log.userId);
-    const shift = fullUser ? fullUser.shift : '2'; 
-
-    const dateObj = new Date(log.date);
-    const line = log.line || 'LINHA_GERAL';
-    
-    const buffer = await createExcelBuffer(line, shift || '1', dateObj, items, allLogs, allUsers);
-
-    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const url = window.URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `Checklist_${line}_Individual.xlsx`;
-    anchor.click();
-    window.URL.revokeObjectURL(url);
+    try {
+        const buffer = await createExcelBuffer(
+            log.line || 'GERAL', 
+            log.userRole.includes('Turno 2') ? '2' : '1', 
+            new Date(log.date), 
+            currentItems, 
+            allLogs, 
+            allUsers
+        );
+        
+        const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        
+        // FORMATO: CHECKLIST_NOME DO LIDER(SÓ O PRIMEIRO NOME)_LINHA_DATA.XLSX
+        const firstName = log.userName.split(' ')[0].toUpperCase();
+        const simpleDate = log.date.split('T')[0];
+        const fileName = `CHECKLIST_${firstName}_${log.line}_${simpleDate}.xlsx`;
+        
+        saveAs(blob, fileName);
+    } catch (e) {
+        console.error("ERRO CRÍTICO NO DOWNLOAD INDIVIDUAL:", e);
+        alert(`Erro ao gerar planilha individual: ${e instanceof Error ? e.message : 'Erro desconhecido'}`);
+    }
 }
-
-// --- ATA DE REUNIÃO ---
 
 export const exportMeetingToExcel = async (meeting: MeetingLog) => {
     const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Ata de Reunião');
+    const worksheet = workbook.addWorksheet('Ata');
 
-    // Título Mesclado (A1:H1) - Tamanho 11
+    // Headers and Styling...
     worksheet.mergeCells('A1:H1');
-    const title = worksheet.getCell('A1');
-    title.value = `ATA DE REUNIÃO: ${meeting.title || 'Sem Título'}`;
-    title.font = { size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
-    title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2563EB' } };
-    title.alignment = { horizontal: 'center', vertical: 'middle' };
+    worksheet.getCell('A1').value = `ATA: ${meeting.title}`;
+    worksheet.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2563EB' } };
+    worksheet.getCell('A1').font = { color: { argb: 'FFFFFFFF' }, bold: true, size: 12 };
+    worksheet.getCell('A1').alignment = { horizontal: 'center', vertical: 'middle' };
 
-    // Info Header (Com Horários)
     worksheet.mergeCells('A2:H2');
-    worksheet.getCell('A2').value = `DATA: ${new Date(meeting.date).toLocaleDateString()} | INÍCIO: ${meeting.startTime} | TÉRMINO: ${meeting.endTime}`;
+    worksheet.getCell('A2').value = `DATA: ${new Date(meeting.date).toLocaleDateString()} | HORÁRIO: ${meeting.startTime} - ${meeting.endTime}`;
     worksheet.getCell('A2').alignment = { horizontal: 'center' };
-    worksheet.getCell('A2').font = { size: 10 };
-    
-    worksheet.getRow(3).height = 10;
 
-    // Foto (A4:H15)
     worksheet.mergeCells('A4:H15');
-    const photoPlace = worksheet.getCell('A4');
-    photoPlace.value = meeting.photoUrl ? "" : "FOTO DA REUNIÃO NÃO DISPONÍVEL";
-    photoPlace.alignment = { vertical: 'middle', horizontal: 'center' };
-    photoPlace.border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} };
-
     if (meeting.photoUrl) {
-         const base64Clean = meeting.photoUrl.replace(/^data:image\/(png|jpg|jpeg);base64,/, "");
-         const imageId = workbook.addImage({
-            base64: base64Clean,
-            extension: 'png',
-         });
-         // Inserir respeitando as células mescladas A4:H15
-         worksheet.addImage(imageId, {
-            tl: { col: 0, row: 3 }, // A4
-            br: { col: 8, row: 15 }, // H15 (Exclusive, so it covers A-H)
-            editAs: 'oneCell'
-         } as any);
+        const imgId = workbook.addImage({ base64: meeting.photoUrl.replace(/^data:image\/\w+;base64,/, ""), extension: 'png' });
+        worksheet.addImage(imgId, { tl: { col: 0, row: 3 }, br: { col: 8, row: 15 }, editAs: 'oneCell' } as any);
+    } else {
+        worksheet.getCell('A4').value = "SEM FOTO";
+        worksheet.getCell('A4').alignment = { horizontal: 'center', vertical: 'middle' };
     }
 
-    // Participantes
     worksheet.mergeCells('A16:H16');
     worksheet.getCell('A16').value = "PARTICIPANTES";
     worksheet.getCell('A16').font = { bold: true };
     worksheet.getCell('A16').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEEEEEE' } };
 
-    let currentRow = 17;
-    meeting.participants.forEach(p => {
-        worksheet.mergeCells(`A${currentRow}:H${currentRow}`);
-        worksheet.getCell(`A${currentRow}`).value = `• ${p}`;
-        currentRow++;
+    let r = 17;
+    const uniqueParticipants = meeting.participants.filter(p => p.trim().toLowerCase() !== meeting.createdBy.trim().toLowerCase());
+    
+    uniqueParticipants.forEach(p => {
+        worksheet.mergeCells(`A${r}:H${r}`);
+        worksheet.getCell(`A${r}`).value = `• ${p}`;
+        r++;
     });
-
-    currentRow++;
     
-    // Assuntos
-    worksheet.mergeCells(`A${currentRow}:H${currentRow}`);
-    worksheet.getCell(`A${currentRow}`).value = "ASSUNTOS TRATADOS";
-    worksheet.getCell(`A${currentRow}`).font = { bold: true };
-    worksheet.getCell(`A${currentRow}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEEEEEE' } };
-    currentRow++;
+    worksheet.mergeCells(`A${r}:H${r}`);
+    worksheet.getCell(`A${r}`).value = `• ${meeting.createdBy} (Relator)`;
+    worksheet.getCell(`A${r}`).font = { bold: true, italic: true };
+    r++;
 
-    worksheet.mergeCells(`A${currentRow}:H${currentRow+5}`);
-    const topicsCell = worksheet.getCell(`A${currentRow}`);
-    topicsCell.value = meeting.topics;
-    topicsCell.alignment = { wrapText: true, vertical: 'top' };
-    
+    worksheet.mergeCells(`A${r}:H${r}`);
+    worksheet.getCell(`A${r}`).value = "PAUTA / ASSUNTOS";
+    worksheet.getCell(`A${r}`).font = { bold: true };
+    worksheet.getCell(`A${r}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEEEEEE' } };
+    r++;
+
+    worksheet.mergeCells(`A${r}:H${r+5}`);
+    worksheet.getCell(`A${r}`).value = meeting.topics;
+    worksheet.getCell(`A${r}`).alignment = { vertical: 'top', wrapText: true };
+
     const buffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const url = window.URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `ATA_REUNIAO_${meeting.date.substring(0,10)}.xlsx`;
-    anchor.click();
-    window.URL.revokeObjectURL(url);
+    const safeTitle = meeting.title.replace(/[^a-z0-9]/gi, '_').toUpperCase();
+    saveAs(blob, `ATA_${safeTitle}_${meeting.date.substring(0,10)}.xlsx`);
 }
 
-// --- PARADA DE LINHA (Mantido Lógica Original) ---
+/**
+ * Função reescrita com blindagem completa de dados e novo layout de assinatura (célula única mesclada).
+ */
 export const exportLineStopToExcel = async (log: ChecklistLog) => {
+    // 1. Validação Inicial
+    if (!log || !log.data) {
+        throw new Error("Dados de parada inválidos ou inexistentes.");
+    }
+
     const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Parada de Linha');
-    const data = log.data as LineStopData;
+    const worksheet = workbook.addWorksheet('Parada');
+    
+    // Casting seguro
+    const data = (log.data || {}) as LineStopData;
 
+    // Definição de colunas: 10 colunas (A-J) para caber 5 blocos de assinatura duplos
     worksheet.columns = [
-        { key: 'A', width: 15 }, { key: 'B', width: 12 }, { key: 'C', width: 12 }, { key: 'D', width: 12 },
-        { key: 'E', width: 12 }, { key: 'F', width: 12 }, { key: 'G', width: 12 }, { key: 'H', width: 12 },
-        { key: 'I', width: 12 }, { key: 'J', width: 12 }
+        { width: 12 }, { width: 12 }, 
+        { width: 12 }, { width: 12 }, 
+        { width: 12 }, { width: 12 }, 
+        { width: 12 }, { width: 12 }, 
+        { width: 12 }, { width: 12 }
     ];
+    
+    const border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} } as Partial<ExcelJS.Borders>;
+    const center = { vertical: 'middle', horizontal: 'center', wrapText: true } as Partial<ExcelJS.Alignment>;
 
-    const borderAll: Partial<ExcelJS.Borders> = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
-    const centerStyle: Partial<ExcelJS.Style> = { alignment: { vertical: 'middle', horizontal: 'center', wrapText: true } };
-    const boldFont = { bold: true, name: 'Arial', size: 10 };
+    // 2. Extração segura do Turno e Data
+    const roleStr = log.userRole || '';
+    let shift = 'N/A';
+    // Tenta extrair turno de diferentes formatos
+    if (roleStr.includes('Turno')) {
+        shift = roleStr.split('Turno')[1]?.trim() || 'N/A';
+    } else if (roleStr.match(/T[1-3]/)) {
+        shift = roleStr.match(/T[1-3]/)?.[0] || 'N/A';
+    }
+    
+    let dateStr = 'Data Inválida';
+    try {
+        const d = new Date(log.date);
+        if (!isNaN(d.getTime())) {
+            dateStr = d.toLocaleDateString();
+        }
+    } catch(e) {}
 
+    // --- TÍTULO ---
     worksheet.mergeCells('A1:J1');
     const title = worksheet.getCell('A1');
     title.value = "EXPRESSO DE PARADA DE LINHA";
-    title.font = { name: 'Arial', size: 16, bold: true };
-    title.alignment = { horizontal: 'center', vertical: 'middle' };
-    title.border = borderAll;
+    title.font = { size: 16, bold: true };
+    title.alignment = center;
+    title.border = border;
 
-    // Cabeçalho
-    const addHeader = (cells: string, label: string, val: string) => {
-        worksheet.mergeCells(cells);
-        const c = worksheet.getCell(cells.split(':')[0]);
-        c.value = `${label}:\n${val}`;
-        c.border = borderAll; c.alignment = centerStyle.alignment; c.font = boldFont;
-    };
+    const addField = (range: string, label: string, val: string | undefined | null) => {
+        worksheet.mergeCells(range);
+        const cell = worksheet.getCell(range.split(':')[0]);
+        cell.value = `${label}:\n${val || ''}`;
+        cell.alignment = center;
+        cell.border = border;
+        cell.font = { bold: true };
+    }
 
-    addHeader('A2:B3', 'MODELO', data.model || '');
-    addHeader('C2:D3', 'DATA', new Date(log.date).toLocaleDateString());
-    
-    let shiftDisplay = '?';
-    if(log.userRole.toLowerCase().includes('turno')) shiftDisplay = log.userRole.split('Turno')[1].trim();
-    addHeader('E2:F3', 'TURNO', shiftDisplay);
-    addHeader('G2:H3', 'LÍDER', log.userName);
-    addHeader('I2:J3', 'CLIENTE', data.client || '');
+    // --- CABEÇALHO DADOS ---
+    addField('A2:B3', 'MODELO', data.model);
+    addField('C2:D3', 'DATA', dateStr);
+    addField('E2:F3', 'TURNO', shift);
+    // Usa nome do autor (log.userName) para o campo Líder
+    const leaderName = log.userName || (log as any).user_name || 'N/A';
+    addField('G2:H3', 'LÍDER/RESP', leaderName);
+    addField('I2:J3', 'CLIENTE', data.client);
 
-    // Dados Técnicos
-    const addSimple = (cells: string, val: string) => { worksheet.mergeCells(cells); const c = worksheet.getCell(cells.split(':')[0]); c.value = val; c.border = borderAll; };
-    
-    addSimple('A4:B4', `INICIO: ${data.startTime}`);
-    addSimple('C4:D4', `TERMINO: ${data.endTime}`);
-    addSimple('E4:F4', `LINHA PARADA: ${data.line}`);
-    addSimple('G4:H4', `FASE: ${data.phase}`);
-    addSimple('I4:J4', `PERCA PROD: ${data.productionLoss || ''}`);
-    
-    addSimple('A5:B5', `TEMPO PADRÃO: ${data.standardTime}`);
-    addSimple('C5:D5', `QTDE PESSOAS: ${data.peopleStopped}`);
-    addSimple('E5:J5', "");
+    const addVal = (range: string, val: string) => {
+        worksheet.mergeCells(range);
+        const c = worksheet.getCell(range.split(':')[0]);
+        c.value = val;
+        c.border = border;
+        c.alignment = center;
+    }
+
+    // --- TEMPOS E DETALHES ---
+    addVal('A4:B4', `INICIO: ${data.startTime || '--:--'}`);
+    addVal('C4:D4', `FIM: ${data.endTime || '--:--'}`);
+    addVal('E4:F4', `LINHA: ${data.line || log.line || ''}`);
+    addVal('G4:H4', `FASE: ${data.phase || ''}`);
+    addVal('I4:J4', `PERCA: ${data.productionLoss || '0'}`);
 
     worksheet.mergeCells('A6:F6');
-    worksheet.getCell('A6').value = `POSTO PARADO:  ${data.stationStart}   ATÉ   ${data.stationEnd}`;
-    worksheet.getCell('A6').border = borderAll; worksheet.getCell('A6').font = { bold: true };
+    worksheet.getCell('A6').value = `POSTO: ${data.stationStart || '?'} ATÉ ${data.stationEnd || '?'}`;
+    worksheet.getCell('A6').border = border;
 
     worksheet.mergeCells('G6:J6');
-    worksheet.getCell('G6').value = `TOTAL HORAS PARADAS: ${data.totalTime}`;
-    worksheet.getCell('G6').border = borderAll; worksheet.getCell('G6').font = { bold: true, color: { argb: 'FFFF0000' } };
+    worksheet.getCell('G6').value = `TOTAL PARADO: ${data.totalTime || '00:00'}`;
+    worksheet.getCell('G6').font = { color: { argb: 'FFFF0000' }, bold: true };
+    worksheet.getCell('G6').border = border;
 
-    // Motivo
+    // --- MOTIVO ---
     worksheet.mergeCells('A7:J7');
-    const motivoHeader = worksheet.getCell('A7');
-    motivoHeader.value = "MOTIVO / OCORRÊNCIA:";
-    motivoHeader.font = { bold: true };
-    motivoHeader.border = { top: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } };
+    worksheet.getCell('A7').value = "MOTIVO / OCORRÊNCIA:";
+    worksheet.getCell('A7').font = { bold: true };
+    
+    worksheet.mergeCells('A8:J11');
+    const motivo = worksheet.getCell('A8');
+    motivo.value = data.motivo || 'Sem descrição.';
+    motivo.alignment = { vertical: 'top', wrapText: true };
+    motivo.border = border;
 
-    worksheet.mergeCells('A8:J8'); 
-    const motivoContent = worksheet.getCell('A8');
-    motivoContent.value = data.motivo || '';
-    motivoContent.border = { bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } };
-    motivoContent.alignment = { vertical: 'top', horizontal: 'left', wrapText: true };
-    worksheet.getRow(8).height = 60;
+    // --- SETORES ---
+    const sectors = [
+        {k:'GQ', l:'PRODUÇÃO', c:0}, {k:'SMD/IAC', l:'PRÉ-FORMA', c:2}, 
+        {k:'MANUTENÇÃO', l:'MATERIAIS', c:4}, {k:'PCP', l:'ÁREA TÉCNICA', c:6}, 
+        {k:'SAMSUNG', l:'EXTERNO', c:8}
+    ];
+    
+    const respSector = (data.responsibleSector || '').toUpperCase();
 
-    // Categorias
-    const categories = [
-        { code: 'GQ', label: 'PRODUÇÃO', col: 'A' },
-        { code: 'SMD/IAC', label: 'PRÉ-FORMA', col: 'C' },
-        { code: 'MANUTENÇÃO', label: 'MATERIAIS', col: 'E' },
-        { code: 'PCP', label: 'ÁREA TÉCNICA', col: 'G' },
-        { code: 'SAMSUNG', label: 'EXTERNO', col: 'I' }
+    sectors.forEach((s, i) => {
+        worksheet.mergeCells(12, s.c+1, 12, s.c+2);
+        worksheet.getCell(12, s.c+1).value = `${respSector === s.k ? '☑' : '☐'} ${s.k}`;
+        worksheet.getCell(12, s.c+1).border = border;
+        
+        worksheet.mergeCells(13, s.c+1, 13, s.c+2);
+        worksheet.getCell(13, s.c+1).value = `${respSector === s.l ? '☑' : '☐'} ${s.l}`;
+        worksheet.getCell(13, s.c+1).border = border;
+    });
+
+    // --- JUSTIFICATIVA ---
+    worksheet.mergeCells('A15:J15');
+    worksheet.getCell('A15').value = "JUSTIFICATIVAS / SOLUÇÃO DEFINITIVA:";
+    worksheet.getCell('A15').font = { bold: true, underline: true };
+
+    worksheet.mergeCells('A16:J19');
+    const just = worksheet.getCell('A16');
+    just.value = data.justification || 'Pendente de justificativa.';
+    just.alignment = { vertical: 'top', wrapText: true };
+    just.border = border;
+
+    // --- NOVO BLOCO DE ASSINATURAS (5 ASSINATURAS LADO A LADO) ---
+    // Ajuste de espaçamento
+    const signRowStart = 21; 
+    
+    // Títulos específicos solicitados
+    const signatures = [
+        'SETOR RESP.', 
+        'SUPERVISOR GERAL', 
+        'COORDENADOR', 
+        'PCP', 
+        'DIRETOR GERAL'
     ];
 
-    categories.forEach((cat, idx) => {
-        const cIdx = idx * 2;
-        const cellTop = worksheet.getCell(9, cIdx + 1);
-        worksheet.mergeCells(9, cIdx + 1, 9, cIdx + 2);
-        cellTop.value = `${data.responsibleSector === cat.code ? '☑' : '☐'} ${cat.code}`;
-        cellTop.alignment = centerStyle.alignment; cellTop.font = boldFont; cellTop.border = borderAll;
+    let colIndex = 1; // Coluna A (index 1 no ExcelJS)
+
+    signatures.forEach((title) => {
+        // Mescla um bloco grande para cada assinatura (2 colunas x 4 linhas)
+        // Ex: A21:B24
+        const startR = signRowStart;
+        const endR = signRowStart + 3;
         
-        const cellBot = worksheet.getCell(10, cIdx + 1);
-        worksheet.mergeCells(10, cIdx + 1, 10, cIdx + 2);
-        cellBot.value = `${data.responsibleSector === cat.label ? '☑' : '☐'} ${cat.label}`;
-        cellBot.alignment = centerStyle.alignment; cellBot.font = boldFont; cellBot.border = borderAll;
+        worksheet.mergeCells(startR, colIndex, endR, colIndex + 1);
+        const cell = worksheet.getCell(startR, colIndex);
+        
+        // Conteúdo com quebra de linha para ficar na mesma célula
+        cell.value = `${title}\n\n\n__________________________\nDATA: __/__/____`;
+        
+        // Estilização Essencial
+        cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+        cell.border = border; // Borda em volta do bloco inteiro
+        cell.font = { bold: true, size: 8 };
+
+        // Avança 2 colunas para o próximo bloco
+        colIndex += 2;
     });
 
-    // Justificativa
-    worksheet.mergeCells('A12:J12');
-    const justTitle = worksheet.getCell('A12');
-    justTitle.value = "JUSTIFICATIVAS E PRAZOS PARA SOLUÇÃO DEFINITIVA (Preenchimento exclusivo do Responsável):";
-    justTitle.font = { bold: true, underline: true };
-    justTitle.border = { top: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } };
-
-    worksheet.mergeCells('A13:J15');
-    const justText = worksheet.getCell('A13');
-    justText.value = data.justification || "";
-    justText.alignment = { vertical: 'top', wrapText: true };
-    justText.border = { bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } };
-    
-    // Assinaturas
-    const signatures = ["SETOR RESP.", "SUPERVISOR GERAL", "COORDENADOR", "PCP", "DIRETOR GERAL"];
-    signatures.forEach((role, idx) => {
-        const cIdx = (idx * 2) + 1;
-        worksheet.mergeCells(17, cIdx, 21, cIdx + 1);
-        const cell = worksheet.getCell(17, cIdx);
-        cell.value = `\n\n\n____________________\n${role}\nDATA: __/__/____`;
-        cell.alignment = { horizontal: 'center', vertical: 'bottom', wrapText: true };
-        cell.font = { size: 8, bold: true };
-        cell.border = borderAll;
-    });
-
+    // 3. Geração do Arquivo com nome seguro
     const buffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const url = window.URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `ParadaLinha_${log.line}_${log.date.substring(0,10)}.xlsx`;
-    anchor.click();
-    window.URL.revokeObjectURL(url);
+    
+    // Nome do arquivo seguro
+    const dateFile = dateStr.replace(/\//g, '-');
+    saveAs(blob, `Parada_${log.line || 'LINHA'}_${dateFile}.xlsx`);
 }

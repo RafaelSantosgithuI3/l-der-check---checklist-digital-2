@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { Menu, X } from 'lucide-react';
 
@@ -30,10 +31,10 @@ export const Layout: React.FC<LayoutProps> = ({ children, variant = 'dashboard',
       {/* Mobile/Tablet Header (Visible below lg breakpoint) */}
       <div className="lg:hidden fixed top-0 left-0 right-0 h-16 bg-zinc-900 border-b border-zinc-800 z-40 flex items-center justify-between px-4 shadow-md">
         <div className="font-bold text-lg text-zinc-100 tracking-tight flex items-center gap-2">
-           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center text-white text-xs font-bold">
-             LC
+           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center text-white shadow-lg shadow-blue-900/20 overflow-hidden">
+             <img src="/logo.png" className="w-full h-full object-contain" alt="LC" />
            </div>
-           Líder Check
+           TECPLAM
         </div>
         <button 
           onClick={() => setIsSidebarOpen(!isSidebarOpen)} 

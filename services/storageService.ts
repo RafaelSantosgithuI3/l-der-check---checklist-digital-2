@@ -1,5 +1,5 @@
 
-import { ChecklistItem, ChecklistLog, User, MeetingLog, Permission } from '../types';
+import { ChecklistItem, ChecklistLog, User, MeetingLog, Permission, ConfigItem } from '../types';
 import { CHECKLIST_ITEMS } from '../constants';
 import { apiFetch } from './networkConfig';
 
@@ -33,7 +33,7 @@ export const getAllChecklistItemsRaw = async (): Promise<ChecklistItem[]> => {
 }
 
 export const saveChecklistItems = async (items: ChecklistItem[]) => {
-    try { await apiFetch('/config/items', { method: 'POST', body: JSON.stringify({ items }) }); } catch (e) { console.error("Erro salvar itens", e); }
+    try { await apiFetch('/config/items', { method: 'POST', body: JSON.stringify({ items }) }); } catch (e) { console.error("Erro ao salvar itens", e); }
 };
 
 export const resetChecklistToDefault = async () => {
@@ -51,83 +51,92 @@ export const savePermissions = async (permissions: Permission[]) => {
     try { await apiFetch('/config/permissions', { method: 'POST', body: JSON.stringify({ permissions }) }); } catch(e) { console.error(e); }
 }
 
-// --- LINHAS ---
+// --- LINHAS DE PRODUÇÃO (CRUD com IDs) ---
 
-export const getLines = async (): Promise<string[]> => {
+export const getLines = async (): Promise<ConfigItem[]> => {
     try {
         const lines = await apiFetch('/config/lines');
-        if (Array.isArray(lines) && lines.length > 0) return lines.map((l: any) => l.name);
-        return ['TP_TNP-01', 'TP_TNP-02', 'TP_TNP-03', 'TP_SEC-01', 'TP_SEC-02'];
-    } catch (e) { return ['TP_TNP-01', 'TP_TNP-02', 'TP_TNP-03', 'TP_SEC-01', 'TP_SEC-02']; }
+        if (Array.isArray(lines) && lines.length > 0) return lines;
+        return [
+            { id: 1, name: 'TP_TNP-01' }, { id: 2, name: 'TP_TNP-02' }, 
+            { id: 3, name: 'TP_TNP-03' }, { id: 4, name: 'TP_SEC-01' }, { id: 5, name: 'TP_SEC-02' }
+        ];
+    } catch (e) {
+        return [
+             { id: 1, name: 'TP_TNP-01' }, { id: 2, name: 'TP_TNP-02' }, 
+             { id: 3, name: 'TP_TNP-03' }, { id: 4, name: 'TP_SEC-01' }, { id: 5, name: 'TP_SEC-02' }
+        ];
+    }
 };
 
-export const saveLines = async (lines: string[]) => {
-    try { await apiFetch('/config/lines', { method: 'POST', body: JSON.stringify({ items: lines }) }); } catch (e) { console.error(e); throw e; }
-};
+export const addLine = async (lineName: string) => {
+    try {
+        await apiFetch('/config/lines', { method: 'POST', body: JSON.stringify({ line: lineName }) });
+    } catch (e) { console.error(e); throw e; }
+}
 
-// --- CARGOS (ROLES) ---
+export const deleteLine = async (id: string | number) => {
+    try {
+        await apiFetch(`/config/lines/${id}`, { method: 'DELETE' });
+    } catch (e) { console.error(e); throw e; }
+}
 
-export const getRoles = async (): Promise<string[]> => {
+// --- CARGOS (ROLES) (CRUD com IDs) ---
+
+export const getRoles = async (): Promise<ConfigItem[]> => {
     try {
         const roles = await apiFetch('/config/roles');
-        if (Array.isArray(roles) && roles.length > 0) return roles.map((r: any) => r.name);
-        return ['Diretor', 'Supervisor', 'Líder', 'Técnico', 'Operador'];
-    } catch (e) { return ['Diretor', 'Supervisor', 'Líder', 'Técnico', 'Operador']; }
+        if (Array.isArray(roles) && roles.length > 0) return roles;
+        return [
+             {id: 1, name: 'Diretor'}, {id: 2, name: 'TI'}, {id: 3, name: 'Supervisor'}, {id: 4, name: 'Líder'}
+        ];
+    } catch (e) {
+         return [
+             {id: 1, name: 'Diretor'}, {id: 2, name: 'TI'}, {id: 3, name: 'Supervisor'}, {id: 4, name: 'Líder'}
+        ];
+    }
 };
 
-export const saveRoles = async (roles: string[]) => {
-    try { await apiFetch('/config/roles', { method: 'POST', body: JSON.stringify({ items: roles }) }); } catch (e) { console.error(e); throw e; }
-};
+export const addRole = async (roleName: string) => {
+    try {
+        await apiFetch('/config/roles', { method: 'POST', body: JSON.stringify({ role: roleName }) });
+    } catch (e) { console.error(e); throw e; }
+}
 
-// --- MODELOS (MODELS) ---
+export const deleteRole = async (id: string | number) => {
+    try {
+        await apiFetch(`/config/roles/${id}`, { method: 'DELETE' });
+    } catch (e) { console.error(e); throw e; }
+}
+
+
+// --- MODELOS E POSTOS (Genéricos ainda) ---
 
 export const getModels = async (): Promise<string[]> => {
-    try {
-        const models = await apiFetch('/config/models');
-        if (Array.isArray(models) && models.length > 0) return models.map((m: any) => m.name);
-        return [];
-    } catch (e) { return []; }
+    try { const models = await apiFetch('/config/models'); if (Array.isArray(models)) return models.map((m: any) => m.name); return []; } catch (e) { return []; }
 };
 
-export const saveModels = async (models: string[]) => {
-    try { await apiFetch('/config/models', { method: 'POST', body: JSON.stringify({ items: models }) }); } catch (e) { console.error(e); throw e; }
+export const saveModels = async (models: string[]) => { 
+    try { await apiFetch('/config/models', { method: 'POST', body: JSON.stringify({ items: models }) }); } catch (e) { console.error(e); } 
 };
 
-// --- POSTOS DE TRABALHO (STATIONS) ---
-
-export const getStations = async (): Promise<string[]> => {
-    try {
-        const stations = await apiFetch('/config/stations');
-        if (Array.isArray(stations) && stations.length > 0) return stations.map((s: any) => s.name);
-        return [];
-    } catch (e) { return []; }
+export const getStations = async (): Promise<string[]> => { 
+    try { const stations = await apiFetch('/config/stations'); if (Array.isArray(stations)) return stations.map((s: any) => s.name); return []; } catch (e) { return []; } 
 };
 
-export const saveStations = async (stations: string[]) => {
-    try { await apiFetch('/config/stations', { method: 'POST', body: JSON.stringify({ items: stations }) }); } catch (e) { console.error(e); throw e; }
+export const saveStations = async (stations: string[]) => { 
+    try { await apiFetch('/config/stations', { method: 'POST', body: JSON.stringify({ items: stations }) }); } catch (e) { console.error(e); } 
 };
 
-// --- HISTÓRICO DE AUDITORIAS (LOGS) ---
+// --- LOGS ---
 
 export const saveLog = async (log: ChecklistLog) => {
-    try { await apiFetch('/logs', { method: 'POST', body: JSON.stringify(log) }); } catch (e) { console.error("Erro salvar log", e); throw e; }
+    try { await apiFetch('/logs', { method: 'POST', body: JSON.stringify(log) }); } catch (e) { console.error("Erro ao salvar log", e); throw e; }
 };
 
 export const getLogs = async (): Promise<ChecklistLog[]> => {
-    try { return await apiFetch('/logs'); } catch (e) { return []; }
+    try { return await apiFetch('/logs'); } catch (e) { console.error("Erro ao buscar logs", e); return []; }
 };
-
-// --- PARADA DE LINHA ---
-
-export const saveLineStop = async (log: ChecklistLog) => {
-    try { await apiFetch('/line-stops', { method: 'POST', body: JSON.stringify(log) }); } catch (e) { console.error("Erro salvar parada", e); throw e; }
-};
-
-export const getLineStops = async (): Promise<ChecklistLog[]> => {
-    try { return await apiFetch('/line-stops'); } catch (e) { return []; }
-};
-
-// --- UTILS ---
 
 export const getTodayLogForUser = async (matricula: string): Promise<ChecklistLog | undefined> => {
     try {
@@ -137,14 +146,53 @@ export const getTodayLogForUser = async (matricula: string): Promise<ChecklistLo
     } catch (e) { return undefined; }
 };
 
+export const getMissingLeadersForToday = async (allUsers: User[]): Promise<User[]> => {
+    const logs = await getLogs();
+    const today = getManausDate().toISOString().split('T')[0];
+    
+    const leaders = allUsers.filter(u => 
+        u.role.toLowerCase().includes('lider') || 
+        u.role.toLowerCase().includes('líder') ||
+        u.role.toLowerCase().includes('supervisor')
+    );
+    
+    return leaders.filter(lider => {
+        const hasLog = logs.some(log => log.userId === lider.matricula && log.date.startsWith(today));
+        return !hasLog;
+    });
+};
+
+// --- PARADA DE LINHA ---
+
+export const getLineStops = async (): Promise<ChecklistLog[]> => {
+    try {
+        return await apiFetch('/line-stops');
+    } catch(e) {
+        console.error("Erro ao buscar paradas", e);
+        return [];
+    }
+}
+
+export const saveLineStop = async (log: ChecklistLog) => {
+    try {
+        await apiFetch('/line-stops', {
+            method: 'POST',
+            body: JSON.stringify(log)
+        });
+    } catch(e) {
+        console.error("Erro ao salvar parada", e);
+        throw e;
+    }
+}
+
 // --- ATA DE REUNIÃO ---
 
 export const saveMeeting = async (meeting: MeetingLog) => {
-    try { await apiFetch('/meetings', { method: 'POST', body: JSON.stringify(meeting) }); } catch (e) { console.error("Erro salvar ata", e); throw e; }
+    try { await apiFetch('/meetings', { method: 'POST', body: JSON.stringify(meeting) }); } catch (e) { console.error("Erro ao salvar ata", e); throw e; }
 }
 
 export const getMeetings = async (): Promise<MeetingLog[]> => {
-    try { return await apiFetch('/meetings'); } catch (e) { return []; }
+    try { return await apiFetch('/meetings'); } catch (e) { console.error("Erro ao buscar atas", e); return []; }
 }
 
 // --- MAINTENANCE ITEMS ---
@@ -165,14 +213,19 @@ const getWeek = (d: Date) => {
 
 export const getLogsByWeekNumber = async (year: number, week: number, shift: string, allUsers: User[]): Promise<ChecklistLog[]> => {
     const logs = await getLogs();
+    
     return logs.filter(log => {
         if (log.type === 'MAINTENANCE' || log.type === 'LINE_STOP') return false;
+
         const logDate = new Date(log.date);
         const logYear = logDate.getFullYear();
         const logWeek = getWeek(logDate);
+        
         if (logYear !== year || logWeek !== week) return false;
+
         const user = allUsers.find(u => u.matricula === log.userId);
         const userShift = user ? user.shift : '';
+        
         if (shift && shift !== 'ALL') {
              if (userShift !== shift) return false;
         }
@@ -180,23 +233,36 @@ export const getLogsByWeekNumber = async (year: number, week: number, shift: str
     });
 }
 
-export const getLogsByWeekSyncStrict = (logs: ChecklistLog[], refDate: Date, line: string, shift: string, allUsers: User[]): ChecklistLog[] => {
+export const getLogsByWeekSyncStrict = (
+    logs: ChecklistLog[], 
+    refDate: Date, 
+    line: string,
+    shift: string,
+    allUsers: User[]
+): ChecklistLog[] => {
     const current = new Date(refDate);
     const day = current.getDay(); 
     const diff = current.getDate() - day + (day === 0 ? -6 : 1); 
+    
     const monday = new Date(current.setDate(diff));
     monday.setHours(0,0,0,0);
+    
     const sunday = new Date(monday);
     sunday.setDate(monday.getDate() + 6);
     sunday.setHours(23,59,59,999);
 
     return logs.filter(log => {
         if (log.type === 'MAINTENANCE' || log.type === 'LINE_STOP') return false;
+
         const logD = new Date(log.date);
+        
         const user = allUsers.find(u => u.matricula === log.userId);
         const logShift = user ? user.shift : '??';
         if (shift && shift !== 'ALL' && logShift !== shift) return false;
-        return (log.line === line) && logD >= monday && logD <= sunday;
+
+        return (log.line === line) && 
+               logD >= monday && 
+               logD <= sunday;
     });
 };
 

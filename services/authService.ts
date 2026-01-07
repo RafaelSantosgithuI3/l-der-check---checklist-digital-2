@@ -3,7 +3,7 @@ import { User } from '../types';
 import { apiFetch, isServerConfigured } from './networkConfig';
 
 const CURRENT_USER_KEY = 'lider_check_current_user';
-// Removido 'AUDITOR' da lista de admins. Agora eles são usuários padrão com permissões específicas de visualização.
+// Roles que possuem privilégios administrativos
 const ADMIN_ROLES = ['SUPERVISOR', 'COORDENADOR', 'DIRETOR', 'GERENTE', 'TI'];
 
 // --- AUTH BASIC ---
@@ -32,7 +32,8 @@ export const loginUser = async (matricula: string, password: string): Promise<{ 
     });
 
     const user = response.user;
-    localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
+    // Alterado para sessionStorage para não persistir após fechar o navegador
+    sessionStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
     return { success: true, user, message: 'Login realizado.' };
 
   } catch (error: any) {
@@ -41,16 +42,16 @@ export const loginUser = async (matricula: string, password: string): Promise<{ 
 };
 
 export const logoutUser = () => {
-  localStorage.removeItem(CURRENT_USER_KEY);
+  sessionStorage.removeItem(CURRENT_USER_KEY);
 };
 
 export const getSessionUser = (): User | null => {
-  const userStr = localStorage.getItem(CURRENT_USER_KEY);
+  const userStr = sessionStorage.getItem(CURRENT_USER_KEY);
   return userStr ? JSON.parse(userStr) : null;
 };
 
 export const updateSessionUser = (user: User) => {
-    localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
+    sessionStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
 };
 
 export const isAdmin = (user: User | null): boolean => {

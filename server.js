@@ -1,6 +1,7 @@
+
 /**
- * LÍDER CHECK - BACKEND V2.2 (Gestão Centralizada & Melhorias)
- * Autor: Senior Full Stack Engineer
+ * LÍDER CHECK - BACKEND V9.0 (Fix Management Routes)
+ * Autor: Senior Software Architect
  */
 
 const express = require('express');
@@ -9,8 +10,8 @@ const sqlite3 = require('sqlite3').verbose();
 const bodyParser = require('body-parser');
 const path = require('path');
 const fs = require('fs');
-const bcrypt = require('bcrypt'); // Segurança
-const os = require('os'); // Adicionado para exibir IP
+const bcrypt = require('bcrypt');
+const os = require('os');
 
 const app = express();
 const PORT = 3000;
@@ -25,13 +26,9 @@ app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 const dbPath = './lidercheck.db';
 const db = new sqlite3.Database(dbPath, (err) => {
     if (err) console.error("Erro Crítico DB:", err.message);
-    // Mensagem de conexão movida para o listen para ficar junto
 });
 
-// --- CONSTANTES DO SISTEMA ---
-const MODULES = ['CHECKLIST', 'MEETING', 'MAINTENANCE', 'AUDIT', 'ADMIN', 'LINE_STOP', 'MANAGEMENT'];
-
-// --- FUNÇÕES AUXILIARES DE BANCO (Promisified) ---
+// --- FUNÇÕES AUXILIARES (Promisified) ---
 const dbRun = (sql, params = []) => new Promise((resolve, reject) => {
     db.run(sql, params, function (err) {
         if (err) reject(err);
@@ -56,7 +53,7 @@ const dbGet = (sql, params = []) => new Promise((resolve, reject) => {
 // --- INICIALIZAÇÃO E MIGRAÇÃO ---
 const initDatabase = async () => {
     try {
-        // 1. Tabela de Usuários
+        // 1. Users
         await dbRun(`CREATE TABLE IF NOT EXISTS users (
             matricula TEXT PRIMARY KEY,
             name TEXT,
@@ -67,7 +64,7 @@ const initDatabase = async () => {
             is_admin INTEGER DEFAULT 0
         )`);
 
-        // 2. Tabelas de Logs
+        // 2. Logs Líder (Com Snapshot)
         await dbRun(`CREATE TABLE IF NOT EXISTS logs_lider (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id TEXT,
@@ -78,10 +75,11 @@ const initDatabase = async () => {
             items_count INTEGER,
             ng_count INTEGER,
             observation TEXT,
-            data TEXT
+            data TEXT,
+            items_snapshot TEXT
         )`);
-        await dbRun("CREATE INDEX IF NOT EXISTS idx_logs_lider_date ON logs_lider(date)");
-
+        
+        // 3. Logs Manutenção (Com Snapshot)
         await dbRun(`CREATE TABLE IF NOT EXISTS logs_manutencao (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id TEXT,
@@ -93,11 +91,11 @@ const initDatabase = async () => {
             ng_count INTEGER,
             observation TEXT,
             data TEXT,
-            maintenance_target TEXT
+            maintenance_target TEXT,
+            items_snapshot TEXT
         )`);
-        await dbRun("CREATE INDEX IF NOT EXISTS idx_logs_maint_date ON logs_manutencao(date)");
 
-        // 3. Tabelas de Itens
+        // 4. Config Items
         await dbRun(`CREATE TABLE IF NOT EXISTS items_lider (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             category TEXT,
@@ -114,7 +112,7 @@ const initDatabase = async () => {
             image_url TEXT
         )`);
 
-        // 4. Paradas de Linha
+        // 5. Line Stops
         await dbRun(`CREATE TABLE IF NOT EXISTS line_stops (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id TEXT,
@@ -123,45 +121,35 @@ const initDatabase = async () => {
             line TEXT,
             date TEXT,
             status TEXT,
-            data TEXT
+            data TEXT,
+            signed_doc_url TEXT
         )`);
 
-        // 5. Configurações (Gestão)
-        await dbRun(`CREATE TABLE IF NOT EXISTS config_lines (name TEXT PRIMARY KEY)`);
-        await dbRun(`CREATE TABLE IF NOT EXISTS config_roles (name TEXT PRIMARY KEY)`);
-        await dbRun(`CREATE TABLE IF NOT EXISTS config_models (name TEXT PRIMARY KEY)`); // Novo
-        await dbRun(`CREATE TABLE IF NOT EXISTS config_stations (name TEXT PRIMARY KEY)`); // Novo
+        // 6. Configs Gerais (Tables Existentes conforme solicitado)
+        await dbRun(`CREATE TABLE IF NOT EXISTS config_lines (id INTEGER PRIMARY KEY AUTOINCREMENT, line TEXT)`);
+        await dbRun(`CREATE TABLE IF NOT EXISTS config_roles (id INTEGER PRIMARY KEY AUTOINCREMENT, role TEXT)`);
+        
+        await dbRun(`CREATE TABLE IF NOT EXISTS config_models (name TEXT PRIMARY KEY)`); 
+        await dbRun(`CREATE TABLE IF NOT EXISTS config_stations (name TEXT PRIMARY KEY)`); 
         await dbRun(`CREATE TABLE IF NOT EXISTS config_permissions (role TEXT, module TEXT, allowed INTEGER, PRIMARY KEY (role, module))`);
         
-        // 6. ATA (Meetings)
+        // 7. Meetings
         await dbRun(`CREATE TABLE IF NOT EXISTS meetings (id TEXT PRIMARY KEY, title TEXT, date TEXT, start_time TEXT, end_time TEXT, photo_url TEXT, participants TEXT, topics TEXT, created_by TEXT)`);
 
-        // --- MIGRATIONS LINE_STOPS ---
-        await dbRun("ALTER TABLE line_stops ADD COLUMN user_role TEXT").catch(() => {});
-        await dbRun("ALTER TABLE line_stops ADD COLUMN status TEXT").catch(() => {});
-        await dbRun("ALTER TABLE line_stops ADD COLUMN user_id TEXT").catch(() => {}); 
-        await dbRun("ALTER TABLE line_stops ADD COLUMN user_name TEXT").catch(() => {});
+        // --- MIGRATIONS ---
+        const addColumn = async (table, col, type) => {
+            try { await dbRun(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`); } catch(e) {}
+        };
 
-        // --- MIGRATIONS MEETINGS ---
-        await dbRun("ALTER TABLE meetings ADD COLUMN title TEXT").catch(() => {});
-        await dbRun("ALTER TABLE meetings ADD COLUMN start_time TEXT").catch(() => {});
-        await dbRun("ALTER TABLE meetings ADD COLUMN end_time TEXT").catch(() => {});
-        await dbRun("ALTER TABLE meetings ADD COLUMN photo_url TEXT").catch(() => {});
+        await addColumn('line_stops', 'user_role', 'TEXT');
+        await addColumn('line_stops', 'status', 'TEXT');
+        await addColumn('line_stops', 'user_id', 'TEXT'); 
+        await addColumn('line_stops', 'user_name', 'TEXT');
+        await addColumn('line_stops', 'signed_doc_url', 'TEXT');
+        await addColumn('logs_lider', 'items_snapshot', 'TEXT');
+        await addColumn('logs_manutencao', 'items_snapshot', 'TEXT');
 
-        // --- SEED PERMISSIONS ---
-        // Atualiza permissões para incluir o novo módulo MANAGEMENT
-        const allRoles = await dbAll("SELECT name FROM config_roles");
-        for (const roleObj of allRoles) {
-            for (const mod of MODULES) {
-                const exists = await dbGet("SELECT 1 FROM config_permissions WHERE role = ? AND module = ?", [roleObj.name, mod]);
-                if (!exists) {
-                    const initialVal = roleObj.name === 'Admin' || roleObj.name === 'Diretor' ? 1 : 0;
-                    await dbRun("INSERT INTO config_permissions (role, module, allowed) VALUES (?, ?, ?)", [roleObj.name, mod, initialVal]);
-                }
-            }
-        }
-        
-        // Seed Admin Padrão
+        // Seed Admin
         const adminExists = await dbGet("SELECT matricula FROM users WHERE matricula = 'admin'");
         if (!adminExists) {
             const hash = await bcrypt.hash('admin', SALT_ROUNDS);
@@ -170,14 +158,13 @@ const initDatabase = async () => {
         }
 
     } catch (error) {
-        console.error("❌ Erro fatal na inicialização:", error);
-        await dbRun("ROLLBACK").catch(() => {});
+        console.error("❌ Erro fatal DB:", error);
     }
 };
 
 initDatabase();
 
-// --- ROTAS (API) ---
+// --- ROTAS ---
 
 app.post('/api/login', async (req, res) => {
     const { matricula, password } = req.body;
@@ -202,9 +189,23 @@ app.post('/api/register', async (req, res) => {
     } catch (e) { res.status(400).json({ error: "Erro cadastro" }); }
 });
 
+app.post('/api/recover', async (req, res) => {
+    const { matricula, email, name, newPassword } = req.body;
+    try {
+        const user = await dbGet(
+            "SELECT * FROM users WHERE LOWER(TRIM(matricula)) = LOWER(TRIM(?)) AND LOWER(TRIM(email)) = LOWER(TRIM(?)) AND LOWER(TRIM(name)) = LOWER(TRIM(?))", 
+            [matricula, email, name]
+        );
+        if (!user) return res.status(401).json({ error: "Dados incorretos" });
+        const hash = await bcrypt.hash(newPassword, SALT_ROUNDS);
+        await dbRun("UPDATE users SET password = ? WHERE matricula = ?", [hash, user.matricula]);
+        res.json({ message: "Senha atualizada" });
+    } catch (e) { res.status(500).json({ error: "Erro servidor" }); }
+});
+
 app.put('/api/users', async (req, res) => {
     const { matricula, name, role, shift, email, password, isAdmin, originalMatricula } = req.body;
-    const targetMatricula = originalMatricula || matricula;
+    const target = originalMatricula || matricula;
     try {
         let sql = `UPDATE users SET matricula=?, name=?, role=?, shift=?, email=?, is_admin=?`;
         let params = [matricula, name, role, shift, email, isAdmin?1:0];
@@ -213,7 +214,7 @@ app.put('/api/users', async (req, res) => {
             params.push(await bcrypt.hash(password, SALT_ROUNDS));
         }
         sql += ` WHERE matricula=?`;
-        params.push(targetMatricula);
+        params.push(target);
         await dbRun(sql, params);
         res.json({ message: "Atualizado" });
     } catch (e) { res.status(500).json({ error: e.message }); }
@@ -230,6 +231,7 @@ app.delete('/api/users/:id', async (req, res) => {
     try { await dbRun("DELETE FROM users WHERE matricula = ?", [req.params.id]); res.json({message: "Deletado"}); } catch (e) { res.status(500).json({error: e.message}); }
 });
 
+// LOGS
 app.get('/api/logs', async (req, res) => {
     try {
         const liderLogs = await dbAll("SELECT *, 'PRODUCTION' as type_marker FROM logs_lider ORDER BY date DESC LIMIT 500");
@@ -237,7 +239,11 @@ app.get('/api/logs', async (req, res) => {
         const allLogs = [...liderLogs, ...maintLogs].sort((a, b) => new Date(b.date) - new Date(a.date));
         
         const response = allLogs.map(r => {
-            const parsedData = JSON.parse(r.data);
+            let parsedData = {};
+            let parsedSnapshot = [];
+            try { parsedData = JSON.parse(r.data); } catch(e) {}
+            try { parsedSnapshot = JSON.parse(r.items_snapshot || '[]'); } catch(e) {}
+
             return {
                 id: r.id.toString(),
                 userId: r.user_id,
@@ -251,7 +257,8 @@ app.get('/api/logs', async (req, res) => {
                 data: parsedData.answers || parsedData,
                 evidenceData: parsedData.evidence || {},
                 type: r.type_marker,
-                maintenanceTarget: r.maintenance_target || parsedData.maintenanceTarget
+                maintenanceTarget: r.maintenance_target || parsedData.maintenanceTarget,
+                itemsSnapshot: parsedSnapshot
             };
         });
         res.json(response);
@@ -259,21 +266,26 @@ app.get('/api/logs', async (req, res) => {
 });
 
 app.post('/api/logs', async (req, res) => {
-    const { userId, userName, userRole, line, date, itemsCount, ngCount, observation, data, evidenceData, type, maintenanceTarget } = req.body;
+    const { userId, userName, userRole, line, date, itemsCount, ngCount, observation, data, evidenceData, type, maintenanceTarget, itemsSnapshot } = req.body;
     const storageObject = { answers: data, evidence: evidenceData, type: type || 'PRODUCTION', maintenanceTarget };
+    
+    // Serialização explícita
     const dataStr = JSON.stringify(storageObject);
+    const snapshotStr = itemsSnapshot ? JSON.stringify(itemsSnapshot) : '[]';
+
     try {
         if (type === 'MAINTENANCE') {
-            await dbRun(`INSERT INTO logs_manutencao (user_id, user_name, user_role, line, date, items_count, ng_count, observation, data, maintenance_target) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [userId, userName, userRole, line, date, itemsCount, ngCount, observation, dataStr, maintenanceTarget]);
+            await dbRun(`INSERT INTO logs_manutencao (user_id, user_name, user_role, line, date, items_count, ng_count, observation, data, maintenance_target, items_snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [userId, userName, userRole, line, date, itemsCount, ngCount, observation, dataStr, maintenanceTarget, snapshotStr]);
         } else {
-            await dbRun(`INSERT INTO logs_lider (user_id, user_name, user_role, line, date, items_count, ng_count, observation, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [userId, userName, userRole, line, date, itemsCount, ngCount, observation, dataStr]);
+            await dbRun(`INSERT INTO logs_lider (user_id, user_name, user_role, line, date, items_count, ng_count, observation, data, items_snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [userId, userName, userRole, line, date, itemsCount, ngCount, observation, dataStr, snapshotStr]);
         }
         res.json({ message: "Salvo" });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ITEMS
 app.get('/api/config/items', async (req, res) => {
     try {
         const lider = await dbAll("SELECT *, 'LEADER' as type FROM items_lider");
@@ -297,26 +309,114 @@ app.post('/api/config/items', async (req, res) => {
     } catch (e) { await dbRun("ROLLBACK"); res.status(500).json({ error: e.message }); }
 });
 
+// LINE STOPS (FIX CRÍTICO)
 app.get('/api/line-stops', async (req, res) => {
     try {
         const stops = await dbAll("SELECT * FROM line_stops ORDER BY date DESC LIMIT 500");
-        res.json(stops.map(r => ({ ...r, id: r.id.toString(), type: 'LINE_STOP', data: JSON.parse(r.data), itemsCount: 0, ngCount: 0, observation: '' })));
+        res.json(stops.map(r => {
+            let parsed = {};
+            try { parsed = JSON.parse(r.data); } catch(e) { parsed = {}; }
+            
+            // FIX: ID Fallback para evitar crash com ids NULL
+            const safeId = r.id ? r.id.toString() : `temp_${Math.random().toString(36).substr(2, 9)}`;
+
+            return { 
+                ...r, 
+                id: safeId, 
+                type: 'LINE_STOP', 
+                data: parsed, 
+                signedDocUrl: r.signed_doc_url,
+                itemsCount: 0, 
+                ngCount: 0, 
+                observation: '' 
+            };
+        }));
     } catch (e) { res.status(500).json({error: e.message}); }
 });
 
 app.post('/api/line-stops', async (req, res) => {
     const { id, userId, userName, userRole, line, date, status, data, signedDocUrl } = req.body;
-    if (signedDocUrl) data.signedDocUrl = signedDocUrl;
-    const dataStr = JSON.stringify(data);
+    
+    // Serialização de dados complexos
+    const dataStr = typeof data === 'object' ? JSON.stringify(data) : data;
+    const finalStatus = status || 'WAITING_JUSTIFICATION';
+    const finalSignedDoc = signedDocUrl || null;
+
     try {
-        if (id && !isNaN(id)) await dbRun(`UPDATE line_stops SET line=?, status=?, data=? WHERE id=?`, [line, status, dataStr, id]);
-        else await dbRun(`INSERT INTO line_stops (user_id, user_name, user_role, line, date, status, data) VALUES (?, ?, ?, ?, ?, ?, ?)`, [userId, userName, userRole, line, date, status, dataStr]);
-        res.json({ message: "Salvo" });
+        let recordExists = false;
+        if (id) {
+            const existingRow = await dbGet("SELECT id FROM line_stops WHERE id = ?", [id]);
+            if (existingRow) recordExists = true;
+        }
+
+        if (recordExists) {
+            await dbRun(
+                `UPDATE line_stops SET line=?, status=?, data=?, signed_doc_url=? WHERE id=?`, 
+                [line, finalStatus, dataStr, finalSignedDoc, id]
+            );
+        } else {
+            const newId = id || Date.now().toString();
+            await dbRun(
+                `INSERT INTO line_stops (id, user_id, user_name, user_role, line, date, status, data, signed_doc_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
+                [newId, userId, userName, userRole, line, date, finalStatus, dataStr, finalSignedDoc]
+            );
+        }
+        res.json({ message: "Salvo com sucesso" });
     } catch (e) { res.status(500).json({error: e.message}); }
 });
 
-// --- ROTAS DE CONFIGURAÇÃO (GESTÃO) ---
+// --- CONFIGS: ROLES & LINES (ESPECÍFICAS) ---
 
+// Roles
+app.get('/api/config/roles', async (req, res) => {
+    try {
+        // Normaliza retorno para {id, name} para o frontend
+        const rows = await dbAll("SELECT id, role as name FROM config_roles");
+        res.json(rows);
+    } catch(e) { res.status(500).json({error: e.message}); }
+});
+
+app.post('/api/config/roles', async (req, res) => {
+    const { role } = req.body; // Recebe apenas { role: "Nome" }
+    try {
+        await dbRun("INSERT INTO config_roles (role) VALUES (?)", [role]);
+        res.json({message: "Cargo salvo"});
+    } catch(e) { res.status(500).json({error: e.message}); }
+});
+
+app.delete('/api/config/roles/:id', async (req, res) => {
+    try {
+        await dbRun("DELETE FROM config_roles WHERE id = ?", [req.params.id]);
+        res.json({message: "Cargo deletado"});
+    } catch(e) { res.status(500).json({error: e.message}); }
+});
+
+// Lines
+app.get('/api/config/lines', async (req, res) => {
+    try {
+        // Normaliza retorno para {id, name}
+        const rows = await dbAll("SELECT id, line as name FROM config_lines");
+        res.json(rows);
+    } catch(e) { res.status(500).json({error: e.message}); }
+});
+
+app.post('/api/config/lines', async (req, res) => {
+    const { line } = req.body;
+    try {
+        await dbRun("INSERT INTO config_lines (line) VALUES (?)", [line]);
+        res.json({message: "Linha salva"});
+    } catch(e) { res.status(500).json({error: e.message}); }
+});
+
+app.delete('/api/config/lines/:id', async (req, res) => {
+    try {
+        await dbRun("DELETE FROM config_lines WHERE id = ?", [req.params.id]);
+        res.json({message: "Linha deletada"});
+    } catch(e) { res.status(500).json({error: e.message}); }
+});
+
+
+// --- CONFIGS GENÉRICAS (Models, Stations) ---
 const createConfigRoutes = (tableName, pathName) => {
     app.get(`/api/config/${pathName}`, async (req, res) => {
         try { res.json(await dbAll(`SELECT * FROM ${tableName}`)); } catch(e) { res.status(500).json({error: e.message}); }
@@ -333,8 +433,6 @@ const createConfigRoutes = (tableName, pathName) => {
     });
 };
 
-createConfigRoutes('config_lines', 'lines');
-createConfigRoutes('config_roles', 'roles');
 createConfigRoutes('config_models', 'models');
 createConfigRoutes('config_stations', 'stations');
 
@@ -353,7 +451,7 @@ app.post('/api/config/permissions', async (req, res) => {
     } catch(e) { await dbRun("ROLLBACK"); res.status(500).json({error: e.message}); }
 });
 
-// --- MEETING (ATA) ---
+// MEETINGS
 app.get('/api/meetings', async (req, res) => {
     try {
         const rows = await dbAll("SELECT * FROM meetings ORDER BY date DESC");
@@ -380,7 +478,7 @@ app.post('/api/meetings', async (req, res) => {
     } catch(e) { res.status(500).json({error: e.message}); }
 });
 
-// Backup & Static Files
+// FILES & BACKUP
 app.post('/api/backup/save', (req, res) => {
     const { fileName, fileData } = req.body;
     const backupsDir = path.join(__dirname, 'backups');
@@ -398,6 +496,7 @@ app.get('/api/admin/backup', (req, res) => {
     else res.status(404).json({ error: "DB não encontrado" });
 });
 
+// STATIC SERVER
 const distPath = path.join(__dirname, 'dist');
 app.use(express.static(distPath));
 app.get('*', (req, res) => {
@@ -410,17 +509,14 @@ function getLocalIp() {
     const interfaces = os.networkInterfaces();
     for (const name of Object.keys(interfaces)) {
         for (const iface of interfaces[name]) {
-            if (iface.family === 'IPv4' && !iface.internal) {
-                return iface.address;
-            }
+            if (iface.family === 'IPv4' && !iface.internal) return iface.address;
         }
     }
     return 'localhost';
 }
 
 app.listen(PORT, '0.0.0.0', () => {
-    const now = new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/Manaus' });
-    console.log(`✅ SERVIDOR RODANDO! (Horário do Servidor: ${now})`);
+    console.log(`✅ SERVIDOR RODANDO! (Horário do Servidor: ${new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/Manaus' })})`);
     console.log(`⚠️ Nota: O App usa Horário de Manaus (-4) para funcionar.`);
     console.log(`--------------------------------------------------`);
     console.log(`💻 ACESSO LOCAL:     http://localhost:${PORT}`);
