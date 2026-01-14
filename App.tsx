@@ -260,7 +260,7 @@ const App = () => {
       if (sector === 'ÁREA TÉCNICA' && ['LÍDER REPARO', 'TÉC. REPARO', 'REPARO'].some(r => role.includes(r))) return true;
       if (sector === 'MANUTENÇÃO' && ['TÉC. MANUTENÇÃO', 'MANUTENÇÃO'].some(r => role.includes(r))) return true;
       if (sector === 'PRODUÇÃO' && ['LÍDER DE PRODUÇÃO', 'LÍDER PRODUÇÃO'].some(r => role.includes(r))) return true;
-      if (sector.includes('SMD') && role.includes('LÍDER')) return true;
+      if (sector.includes('SMD') && role.includes('PQC')) return true;
 
       return false;
   };
@@ -283,7 +283,7 @@ const App = () => {
         if (storedIp) setServerIp(storedIp);
         initApp();
     } else {
-        setServerIp('http://localhost:3000');
+        setServerIp('http://10.20.84:3000/');
         setView('SETUP');
     }
   }, []);
@@ -343,9 +343,8 @@ const App = () => {
 
                 if (auditTab === 'LEADERS') {
                     const leaders = usersList.filter(u => 
-                        u.role.toLowerCase().includes('líder') || 
-                        u.role.toLowerCase().includes('lider') || 
-                        u.role.toLowerCase().includes('supervisor')
+                        u.role.toLowerCase().includes('líder de produção') || 
+                        u.role.toLowerCase().includes('líder do reparo/retrabalho')
                     );
                     
                     const matrix: LeaderStatus[] = leaders.map(leader => {
@@ -1007,7 +1006,7 @@ const App = () => {
       const otherPerms = permissions.filter(p => !(p.role === role && p.module === module));
       const updatedList = [...otherPerms, newPerm];
       setPermissions(updatedList);
-      savePermissions(updatedList).catch(err => console.error("Failed to save permission", err));
+      savePermissions(updatedList).catch(err => console.error("Falha ao salvar a permissão", err));
   }
 
   const handleEditorChange = (list: ChecklistItem[], setList: React.Dispatch<React.SetStateAction<ChecklistItem[]>>, id: string, field: keyof ChecklistItem, value: string) => {
