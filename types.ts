@@ -85,6 +85,7 @@ export interface ChecklistLog {
   
   // Snapshot dos itens no momento do checklist para versionamento
   itemsSnapshot?: ChecklistItem[];
+  userShift?: string; // Add optional shift property to log
 }
 
 export interface MeetingLog {
@@ -101,6 +102,40 @@ export interface MeetingLog {
 
 export interface Permission {
     role: string;
-    module: 'CHECKLIST' | 'MEETING' | 'MAINTENANCE' | 'AUDIT' | 'ADMIN' | 'LINE_STOP' | 'MANAGEMENT';
+    module: 'CHECKLIST' | 'MEETING' | 'MAINTENANCE' | 'AUDIT' | 'ADMIN' | 'LINE_STOP' | 'MANAGEMENT' | 'SCRAP';
     allowed: boolean;
+}
+
+// --- SCRAP MODULE TYPES ---
+
+export interface Material {
+    code: string;
+    description: string;
+    unitPrice: number;
+    modelRef?: string; // Para filtro
+}
+
+export interface ScrapLog {
+    id: string;
+    userId: string; // Quem registrou
+    data: string; // YYYY-MM-DD
+    horario: string; // HH:mm (Manaus)
+    semana: number;
+    turno: string;
+    lider: string; // Nome do líder responsável
+    pqc: string;
+    modelo: string;
+    qty: number;
+    item: string;
+    status: string;
+    codigo: string;
+    descricao: string;
+    valorUn: number;
+    valorTotal: number;
+    modeloUsado: string;
+    responsavel: string;
+    estacao: string;
+    motivo: string;
+    causaRaiz: string;
+    contraMedida?: string; // Pode ser nulo inicialmente
 }

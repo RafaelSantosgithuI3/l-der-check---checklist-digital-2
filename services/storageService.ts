@@ -1,5 +1,5 @@
 
-import { ChecklistItem, ChecklistLog, User, MeetingLog, Permission, ConfigItem } from '../types';
+import { ChecklistItem, ChecklistLog, User, MeetingLog, Permission, ConfigItem, ScrapLog, Material } from '../types';
 import { CHECKLIST_ITEMS } from '../constants';
 import { apiFetch } from './networkConfig';
 
@@ -57,7 +57,6 @@ export const getLines = async (): Promise<ConfigItem[]> => {
     try {
         const data = await apiFetch('/config/lines');
         if (Array.isArray(data)) {
-            // Backend agora retorna {id, name} graças ao alias SQL, então retornamos direto
             return data;
         }
         return [];
@@ -68,7 +67,6 @@ export const getLines = async (): Promise<ConfigItem[]> => {
 };
 
 export const addLine = async (lineName: string) => {
-    // Backend espera { name: "..." } no body
     await apiFetch('/config/lines', {
         method: 'POST',
         body: JSON.stringify({ name: lineName })
@@ -85,7 +83,6 @@ export const getRoles = async (): Promise<ConfigItem[]> => {
     try {
         const data = await apiFetch('/config/roles');
         if (Array.isArray(data)) {
-            // Backend agora retorna {id, name} graças ao alias SQL
             return data;
         }
         return [];
@@ -96,7 +93,6 @@ export const getRoles = async (): Promise<ConfigItem[]> => {
 };
 
 export const addRole = async (roleName: string) => {
-    // Backend espera { name: "..." } no body
     await apiFetch('/config/roles', {
         method: 'POST',
         body: JSON.stringify({ name: roleName })
@@ -191,6 +187,24 @@ export const saveMeeting = async (meeting: MeetingLog) => {
 
 export const getMeetings = async (): Promise<MeetingLog[]> => {
     try { return await apiFetch('/meetings'); } catch (e) { console.error("Erro ao buscar atas", e); return []; }
+}
+
+// --- SCRAP MODULE SERVICES ---
+
+export const saveScrap = async (scrap: Omit<ScrapLog, 'id'>) => {
+    try { await apiFetch('/scraps', { method: 'POST', body: JSON.stringify(scrap) }); } catch(e) { console.error("Erro ao salvar scrap", e); throw e; }
+}
+
+export const getScraps = async (): Promise<ScrapLog[]> => {
+    try { return await apiFetch('/scraps'); } catch(e) { console.error(e); return []; }
+}
+
+export const saveCounterMeasure = async (scrapId: string, contraMedida: string) => {
+    try { await apiFetch(`/scraps/${scrapId}/countermeasure`, { method: 'PUT', body: JSON.stringify({ contraMedida }) }); } catch(e) { console.error(e); throw e; }
+}
+
+export const getMaterials = async (): Promise<Material[]> => {
+    try { return await apiFetch('/materials'); } catch(e) { console.error(e); return []; }
 }
 
 // --- MAINTENANCE ITEMS ---

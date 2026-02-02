@@ -1,6 +1,6 @@
 
 /**
- * LÍDER CHECK - BACKEND V9.1 (Fix Management CRUD)
+ * LÍDER CHECK - BACKEND V9.2 (Scrap Module Added)
  * Autor: Senior Software Architect
  */
 
@@ -125,7 +125,7 @@ const initDatabase = async () => {
             signed_doc_url TEXT
         )`);
 
-        // 6. Configs Gerais (Tables Existentes conforme solicitado)
+        // 6. Configs Gerais
         await dbRun(`CREATE TABLE IF NOT EXISTS config_lines (id INTEGER PRIMARY KEY AUTOINCREMENT, line TEXT)`);
         await dbRun(`CREATE TABLE IF NOT EXISTS config_roles (id INTEGER PRIMARY KEY AUTOINCREMENT, role TEXT)`);
         
@@ -135,6 +135,39 @@ const initDatabase = async () => {
         
         // 7. Meetings
         await dbRun(`CREATE TABLE IF NOT EXISTS meetings (id TEXT PRIMARY KEY, title TEXT, date TEXT, start_time TEXT, end_time TEXT, photo_url TEXT, participants TEXT, topics TEXT, created_by TEXT)`);
+
+        // 8. SCRAP MODULE TABLES
+        await dbRun(`CREATE TABLE IF NOT EXISTS scraps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT,
+            data TEXT,
+            horario TEXT,
+            semana INTEGER,
+            turno TEXT,
+            lider TEXT,
+            pqc TEXT,
+            modelo TEXT,
+            qty INTEGER,
+            item TEXT,
+            status TEXT,
+            codigo TEXT,
+            descricao TEXT,
+            v_un REAL,
+            valor_ttl REAL,
+            modelo_usado TEXT,
+            responsavel TEXT,
+            estacao TEXT,
+            motivo TEXT,
+            causa_raiz TEXT,
+            contra_medida TEXT
+        )`);
+
+        await dbRun(`CREATE TABLE IF NOT EXISTS materials (
+            code TEXT PRIMARY KEY,
+            description TEXT,
+            unit_price REAL,
+            model_ref TEXT
+        )`);
 
         // --- MIGRATIONS ---
         const addColumn = async (table, col, type) => {
@@ -155,6 +188,22 @@ const initDatabase = async () => {
             const hash = await bcrypt.hash('admin', SALT_ROUNDS);
             await dbRun(`INSERT INTO users (matricula, name, role, shift, email, password, is_admin) VALUES (?, ?, ?, ?, ?, ?, ?)`,
                 ['admin', 'Admin Local', 'Admin', '1', 'admin@local.com', hash, 1]);
+        }
+
+        // Seed Materials (Exemplo para Autocomplete)
+        const materialsExist = await dbGet("SELECT count(*) as count FROM materials");
+        if (materialsExist.count === 0) {
+            const seedMats = [
+                ['GH98-45678A', 'BATERIA LI-ION 5000MAH', 15.50, 'GALAXY A14'],
+                ['GH97-12345B', 'DISPLAY LCD TOUCH COMPLETO', 45.00, 'GALAXY A14'],
+                ['GH59-99887C', 'CABO USB-C BRANCO', 2.10, 'GERAL'],
+                ['GH63-11223D', 'BACK COVER AZUL', 8.75, 'GALAXY A14'],
+                ['GH96-55443E', 'PCI MAINBOARD 128GB', 120.00, 'GALAXY S23'],
+                ['GH98-11223F', 'CAMERA MODULE REAR 50MP', 35.00, 'GALAXY S23']
+            ];
+            for (const m of seedMats) {
+                await dbRun("INSERT INTO materials (code, description, unit_price, model_ref) VALUES (?, ?, ?, ?)", m);
+            }
         }
 
     } catch (error) {
@@ -359,14 +408,13 @@ app.post('/api/line-stops', async (req, res) => {
 // Roles
 app.get('/api/config/roles', async (req, res) => {
     try {
-        // Alias 'role' as 'name' para compatibilidade com Frontend ConfigItem
         const rows = await dbAll("SELECT id, role as name FROM config_roles");
         res.json(rows);
     } catch(e) { res.status(500).json({error: e.message}); }
 });
 
 app.post('/api/config/roles', async (req, res) => {
-    const { name } = req.body; // Frontend envia { name: "..." }
+    const { name } = req.body; 
     try {
         await dbRun("INSERT INTO config_roles (role) VALUES (?)", [name]);
         res.json({message: "Cargo salvo"});
@@ -383,14 +431,13 @@ app.delete('/api/config/roles/:id', async (req, res) => {
 // Lines
 app.get('/api/config/lines', async (req, res) => {
     try {
-        // Alias 'line' as 'name' para compatibilidade
         const rows = await dbAll("SELECT id, line as name FROM config_lines");
         res.json(rows);
     } catch(e) { res.status(500).json({error: e.message}); }
 });
 
 app.post('/api/config/lines', async (req, res) => {
-    const { name } = req.body; // Frontend envia { name: "..." }
+    const { name } = req.body; 
     try {
         await dbRun("INSERT INTO config_lines (line) VALUES (?)", [name]);
         res.json({message: "Linha salva"});
@@ -464,6 +511,68 @@ app.post('/api/meetings', async (req, res) => {
         await dbRun(`INSERT INTO meetings (id, title, date, start_time, end_time, photo_url, participants, topics, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [id, title || '', date, startTime, endTime, photoUrl, JSON.stringify(participants), topics, createdBy]);
         res.json({message: "Ata Salva"});
+    } catch(e) { res.status(500).json({error: e.message}); }
+});
+
+// --- SCRAP MODULE ENDPOINTS ---
+
+app.get('/api/scraps', async (req, res) => {
+    try {
+        const rows = await dbAll("SELECT * FROM scraps ORDER BY date DESC, id DESC LIMIT 1000");
+        res.json(rows.map(r => ({
+            id: r.id.toString(),
+            userId: r.user_id,
+            data: r.data,
+            horario: r.horario,
+            semana: r.semana,
+            turno: r.turno,
+            lider: r.lider,
+            pqc: r.pqc,
+            modelo: r.modelo,
+            qty: r.qty,
+            item: r.item,
+            status: r.status,
+            codigo: r.codigo,
+            descricao: r.descricao,
+            valorUn: r.v_un,
+            valorTotal: r.valor_ttl,
+            modeloUsado: r.modelo_usado,
+            responsavel: r.responsavel,
+            estacao: r.estacao,
+            motivo: r.motivo,
+            causaRaiz: r.causa_raiz,
+            contraMedida: r.contra_medida
+        })));
+    } catch(e) { res.status(500).json({error: e.message}); }
+});
+
+app.post('/api/scraps', async (req, res) => {
+    const { userId, data, horario, semana, turno, lider, pqc, modelo, qty, item, status, codigo, descricao, valorUn, valorTotal, modeloUsado, responsavel, estacao, motivo, causaRaiz, contraMedida } = req.body;
+    try {
+        await dbRun(`INSERT INTO scraps (user_id, data, horario, semana, turno, lider, pqc, modelo, qty, item, status, codigo, descricao, v_un, valor_ttl, modelo_usado, responsavel, estacao, motivo, causa_raiz, contra_medida) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                     [userId, data, horario, semana, turno, lider, pqc, modelo, qty, item, status, codigo, descricao, valorUn, valorTotal, modeloUsado, responsavel, estacao, motivo, causaRaiz, contraMedida || null]);
+        res.json({message: "Scrap salvo"});
+    } catch(e) { res.status(500).json({error: e.message}); }
+});
+
+app.put('/api/scraps/:id/countermeasure', async (req, res) => {
+    const { contraMedida } = req.body;
+    try {
+        await dbRun("UPDATE scraps SET contra_medida = ? WHERE id = ?", [contraMedida, req.params.id]);
+        res.json({message: "Contra Medida Salva"});
+    } catch(e) { res.status(500).json({error: e.message}); }
+});
+
+app.get('/api/materials', async (req, res) => {
+    try {
+        const rows = await dbAll("SELECT * FROM materials");
+        res.json(rows.map(r => ({
+            code: r.code,
+            description: r.description,
+            unitPrice: r.unit_price,
+            modelRef: r.model_ref
+        })));
     } catch(e) { res.status(500).json({error: e.message}); }
 });
 
